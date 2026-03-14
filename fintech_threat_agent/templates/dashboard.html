@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinTech Threat Detection Agent</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #0d1b2a, #1b2838);
+            border-bottom: 2px solid #00d4ff;
+            padding: 24px 40px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            color: #00d4ff;
+            margin-bottom: 6px;
+        }
+        .header p {
+            color: #8899aa;
+            font-size: 14px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        /* Search Box */
+        .scan-box {
+            background: #111827;
+            border: 1px solid #1e3a5f;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .scan-box h2 {
+            color: #00d4ff;
+            margin-bottom: 8px;
+            font-size: 20px;
+        }
+        .scan-box p {
+            color: #778899;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .input-row {
+            display: flex;
+            gap: 12px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .input-row input {
+            flex: 1;
+            padding: 14px 18px;
+            border-radius: 8px;
+            border: 1px solid #1e3a5f;
+            background: #0a0e1a;
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+        }
+        .input-row input:focus {
+            border-color: #00d4ff;
+        }
+        .input-row input::placeholder {
+            color: #556677;
+        }
+        .btn-scan {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #00d4ff, #0088cc);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .btn-scan:hover {
+            background: linear-gradient(135deg, #33ddff, #009ee0);
+        }
+        .btn-scan:disabled {
+            background: #334455;
+            color: #667788;
+            cursor: not-allowed;
+        }
+
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+        .loading.active { display: block; }
+        .spinner {
+            width: 48px; height: 48px;
+            border: 4px solid #1e3a5f;
+            border-top: 4px solid #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading p { color: #8899aa; }
+
+        /* Results */
+        .results { display: none; }
+        .results.active { display: block; }
+
+        /* Risk Score */
+        .risk-card {
+            background: #111827;
+            border-radius: 12px;
+            padding: 28px;
+            text-align: center;
+            margin-bottom: 24px;
+            border: 1px solid #1e3a5f;
+        }
+        .risk-score {
+            font-size: 64px;
+            font-weight: 800;
+            margin: 10px 0;
+        }
+        .risk-label {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .risk-bar-bg {
+            background: #1e293b;
+            border-radius: 10px;
+            height: 16px;
+            max-width: 400px;
+            margin: 12px auto;
+            overflow: hidden;
+        }
+        .risk-bar-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 1s ease;
+        }
+
+        /* Severity Colors */
+        .sev-critical { color: #ff4444; }
+        .sev-high { color: #ff8800; }
+        .sev-medium { color: #ffcc00; }
+        .sev-low { color: #00ccff; }
+        .sev-info { color: #888; }
+        .bg-critical { background: #ff4444; }
+        .bg-high { background: #ff8800; }
+        .bg-medium { background: #ffcc00; }
+        .bg-low { background: #00ccff; }
+
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+        .summary-card {
+            background: #111827;
+            border: 1px solid #1e3a5f;
+            border-radius: 10px;
+            padding: 18px;
+            text-align: center;
+        }
+        .summary-card .count {
+            font-size: 32px;
+            font-weight: 700;
+        }
+        .summary-card .label {
+            font-size: 12px;
+            color: #8899aa;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* Scan Overview */
+        .section {
+            background: #111827;
+            border: 1px solid #1e3a5f;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .section-title {
+            background: #0d1b2a;
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: 700;
+            color: #00d4ff;
+            border-bottom: 1px solid #1e3a5f;
+        }
+        .section-body {
+            padding: 16px 20px;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            text-align: left;
+            padding: 10px 12px;
+            color: #8899aa;
+            font-size: 12px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #1e3a5f;
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #0d1b2a;
+            font-size: 14px;
+        }
+        .status-pass { color: #44cc44; font-weight: 600; }
+        .status-fail { color: #ff4444; font-weight: 600; }
+        .status-warn { color: #ffcc00; font-weight: 600; }
+        .status-na { color: #667788; }
+
+        /* Threat Cards */
+        .threat-card {
+            border-left: 4px solid;
+            background: #0d1b2a;
+            border-radius: 0 8px 8px 0;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+        }
+        .threat-card.critical { border-color: #ff4444; }
+        .threat-card.high { border-color: #ff8800; }
+        .threat-card.medium { border-color: #ffcc00; }
+        .threat-card.low { border-color: #00ccff; }
+        .threat-card.info { border-color: #667788; }
+        .threat-card .threat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .threat-card .threat-title { font-weight: 600; font-size: 15px; }
+        .threat-badge {
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #000;
+        }
+        .threat-card .threat-desc {
+            color: #99aabb;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+        .threat-card .threat-fix {
+            color: #44cc88;
+            font-size: 13px;
+        }
+        .threat-card .threat-refs {
+            color: #667788;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        /* Error */
+        .error-box {
+            display: none;
+            background: #2a0a0a;
+            border: 1px solid #ff4444;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            color: #ff6666;
+            margin-bottom: 24px;
+        }
+        .error-box.active { display: block; }
+
+        /* Export button */
+        .btn-export {
+            padding: 10px 20px;
+            background: #1e3a5f;
+            color: #00d4ff;
+            border: 1px solid #00d4ff;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 16px;
+        }
+        .btn-export:hover { background: #254a72; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>FinTech Threat Detection Agent</h1>
+        <p>Cybersecurity Assessment for Indian Fintech Products</p>
+    </div>
+
+    <div class="container">
+        <!-- Scan Input -->
+        <div class="scan-box">
+            <h2>Scan a Fintech Product</h2>
+            <p>Paste any fintech product URL to detect security threats and check regulatory compliance</p>
+            <div class="input-row">
+                <input type="text" id="urlInput" placeholder="e.g. https://paytm.com" />
+                <button class="btn-scan" id="scanBtn" onclick="startScan()">Scan Now</button>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p id="loadingText">Scanning target URL...</p>
+        </div>
+
+        <!-- Error -->
+        <div class="error-box" id="errorBox"></div>
+
+        <!-- Results -->
+        <div class="results" id="results">
+            <!-- Risk Score -->
+            <div class="risk-card" id="riskCard">
+                <div>Security Score</div>
+                <div class="risk-score" id="riskScore">--</div>
+                <div class="risk-label" id="riskLabel">--</div>
+                <div class="risk-bar-bg"><div class="risk-bar-fill" id="riskBar"></div></div>
+            </div>
+
+            <!-- Threat Summary -->
+            <div class="summary-grid" id="summaryGrid"></div>
+
+            <!-- Scan Overview -->
+            <div class="section">
+                <div class="section-title">Scan Overview</div>
+                <div class="section-body">
+                    <table id="overviewTable"><tbody></tbody></table>
+                </div>
+            </div>
+
+            <!-- Threats -->
+            <div class="section">
+                <div class="section-title">Threats Detected</div>
+                <div class="section-body" id="threatsList"></div>
+            </div>
+
+            <!-- Compliance -->
+            <div class="section">
+                <div class="section-title">Indian Regulatory Compliance</div>
+                <div class="section-body">
+                    <table id="complianceTable">
+                        <thead>
+                            <tr><th>Regulation</th><th>Section</th><th>Requirement</th><th>Status</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Export -->
+            <div style="text-align:center;">
+                <button class="btn-export" onclick="exportJSON()">Export Full Report (JSON)</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+let reportData = null;
+
+function startScan() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) { alert('Please enter a URL'); return; }
+
+    document.getElementById('scanBtn').disabled = true;
+    document.getElementById('loading').classList.add('active');
+    document.getElementById('results').classList.remove('active');
+    document.getElementById('errorBox').classList.remove('active');
+
+    const msgs = ['Scanning HTTP connectivity...', 'Checking SSL/TLS...', 'Analyzing DNS records...', 'Scanning security headers...', 'Analyzing page content...', 'Checking regulatory compliance...', 'Generating report...'];
+    let mi = 0;
+    const msgInterval = setInterval(() => {
+        mi = (mi + 1) % msgs.length;
+        document.getElementById('loadingText').textContent = msgs[mi];
+    }, 2500);
+
+    fetch('/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url })
+    })
+    .then(r => { if (!r.ok) throw new Error(`Server error: ${r.status}`); return r.json(); })
+    .then(data => {
+        clearInterval(msgInterval);
+        document.getElementById('loading').classList.remove('active');
+        document.getElementById('scanBtn').disabled = false;
+        if (data.success) {
+            reportData = data.data;
+            renderResults(data.data);
+        } else {
+            showError(data.error || 'Scan failed');
+        }
+    })
+    .catch(err => {
+        clearInterval(msgInterval);
+        document.getElementById('loading').classList.remove('active');
+        document.getElementById('scanBtn').disabled = false;
+        showError(err.message);
+    });
+}
+
+function showError(msg) {
+    const box = document.getElementById('errorBox');
+    box.textContent = 'Error: ' + msg;
+    box.classList.add('active');
+}
+
+function renderResults(data) {
+    const threats = data.threats || [];
+    const compliance = data.compliance || {};
+    const scan = data.scan_results || {};
+
+    // Risk score
+    let score = 100;
+    const penalties = { CRITICAL: 25, HIGH: 15, MEDIUM: 8, LOW: 3, INFO: 0 };
+    threats.forEach(t => { score -= (penalties[t.severity] || 0); });
+    (compliance.issues || []).forEach(c => {
+        if (c.status === 'FAIL') score -= 5;
+        else if (c.status === 'WARNING') score -= 2;
+    });
+    score = Math.max(0, Math.min(100, score));
+
+    let rating, color;
+    if (score >= 80) { rating = 'LOW RISK'; color = '#44cc44'; }
+    else if (score >= 60) { rating = 'MODERATE RISK'; color = '#ffcc00'; }
+    else if (score >= 40) { rating = 'HIGH RISK'; color = '#ff8800'; }
+    else { rating = 'CRITICAL RISK'; color = '#ff4444'; }
+
+    document.getElementById('riskScore').textContent = score;
+    document.getElementById('riskScore').style.color = color;
+    document.getElementById('riskLabel').textContent = rating;
+    document.getElementById('riskLabel').style.color = color;
+    const bar = document.getElementById('riskBar');
+    bar.style.width = score + '%';
+    bar.style.background = color;
+
+    // Summary cards
+    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    threats.forEach(t => { if (counts[t.severity] !== undefined) counts[t.severity]++; });
+    const grid = document.getElementById('summaryGrid');
+    grid.innerHTML = '';
+    [['CRITICAL', 'sev-critical'], ['HIGH', 'sev-high'], ['MEDIUM', 'sev-medium'], ['LOW', 'sev-low']].forEach(([sev, cls]) => {
+        grid.innerHTML += `<div class="summary-card"><div class="count ${cls}">${counts[sev]}</div><div class="label">${sev}</div></div>`;
+    });
+    const compPass = (compliance.issues || []).filter(c => c.status === 'PASS').length;
+    const compTotal = (compliance.issues || []).length;
+    grid.innerHTML += `<div class="summary-card"><div class="count" style="color:#00d4ff">${compPass}/${compTotal}</div><div class="label">Compliance</div></div>`;
+
+    // Overview table
+    const http = scan.http || {};
+    const ssl = scan.ssl || {};
+    const dns = scan.dns || {};
+    const tbody = document.querySelector('#overviewTable tbody');
+    tbody.innerHTML = '';
+    const rows = [
+        ['HTTP Status', http.reachable ? `<span class="status-pass">Reachable (${http.status_code})</span>` : '<span class="status-fail">Unreachable</span>', `${http.response_time_ms || 'N/A'}ms response`],
+        ['HTTPS', http.uses_https ? '<span class="status-pass">Yes</span>' : '<span class="status-fail">No</span>', http.uses_https ? 'Encrypted' : 'Plaintext'],
+        ['SSL/TLS', ssl.has_ssl ? '<span class="status-pass">Active</span>' : '<span class="status-fail">None</span>', ssl.protocol_version || 'N/A'],
+        ['SPF Record', dns.has_spf ? '<span class="status-pass">Found</span>' : '<span class="status-fail">Missing</span>', 'Email spoofing protection'],
+        ['DMARC Record', dns.has_dmarc ? '<span class="status-pass">Found</span>' : '<span class="status-fail">Missing</span>', 'Email auth policy'],
+    ];
+    rows.forEach(([check, status, detail]) => {
+        tbody.innerHTML += `<tr><td>${check}</td><td>${status}</td><td style="color:#778899">${detail}</td></tr>`;
+    });
+
+    // Threats
+    const tl = document.getElementById('threatsList');
+    if (threats.length === 0) {
+        tl.innerHTML = '<p style="color:#44cc44;text-align:center;padding:20px">No threats detected!</p>';
+    } else {
+        tl.innerHTML = threats.map((t, i) => {
+            const sev = t.severity.toLowerCase();
+            const bgColors = { critical: '#ff4444', high: '#ff8800', medium: '#ffcc00', low: '#00ccff', info: '#667788' };
+            return `<div class="threat-card ${sev}">
+                <div class="threat-header">
+                    <span class="threat-title">#${i+1} ${t.title}</span>
+                    <span class="threat-badge" style="background:${bgColors[sev]}">${t.severity}</span>
+                </div>
+                <div class="threat-desc">${t.description}</div>
+                <div class="threat-fix">Recommendation: ${t.recommendation}</div>
+                ${t.references && t.references.length ? `<div class="threat-refs">Ref: ${t.references.join(', ')}</div>` : ''}
+            </div>`;
+        }).join('');
+    }
+
+    // Compliance
+    const ctbody = document.querySelector('#complianceTable tbody');
+    ctbody.innerHTML = '';
+    (compliance.issues || []).forEach(c => {
+        const statusCls = c.status === 'PASS' ? 'status-pass' : c.status === 'FAIL' ? 'status-fail' : c.status === 'WARNING' ? 'status-warn' : 'status-na';
+        const statusText = c.status === 'NOT_CHECKED' ? 'N/A' : c.status;
+        ctbody.innerHTML += `<tr><td>${c.regulation}</td><td>${c.section || ''}</td><td>${c.requirement}</td><td class="${statusCls}">${statusText}</td></tr>`;
+    });
+
+    document.getElementById('results').classList.add('active');
+}
+
+function exportJSON() {
+    if (!reportData) return;
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'threat-report.json';
+    a.click();
+}
+
+document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startScan();
+});
+</script>
+</body>
+</html>
