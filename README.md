@@ -29,15 +29,34 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Option A: Web Dashboard (No Terminal Needed)
+
 ```bash
-# Basic scan
+pip install -r requirements.txt
+uvicorn fintech_threat_agent.api:app --reload
+```
+Then open **http://localhost:8000** in your browser. Paste any URL and click "Scan Now".
+
+### Option B: Streamlit Dashboard
+
+```bash
+pip install -r requirements.txt
+streamlit run -m fintech_threat_agent.streamlit_app
+```
+Opens a dashboard at **http://localhost:8501**.
+
+### Option C: Docker (One Command)
+
+```bash
+docker-compose up --build
+```
+Opens at **http://localhost:8000**. No Python install needed.
+
+### Option D: CLI (Terminal)
+
+```bash
 python -m fintech_threat_agent https://example-fintech.in
-
-# Export JSON report
 python -m fintech_threat_agent https://example-fintech.in --output report.json
-
-# With custom timeout
-python -m fintech_threat_agent https://example-fintech.in --timeout 30
 ```
 
 ## Output
