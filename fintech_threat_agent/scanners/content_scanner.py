@@ -8,7 +8,11 @@ from bs4 import BeautifulSoup
 
 
 class ContentScanner:
-    """Scans webpage content for security-relevant patterns."""
+    """Scans webpage content for security-relevant patterns.
+
+    Supports both single-page scanning and deep multi-page scanning
+    using pre-crawled site data from SiteCrawler.
+    """
 
     SENSITIVE_PATTERNS = {
         "api_key_exposure": re.compile(
@@ -40,8 +44,14 @@ class ContentScanner:
         self.url = url
         self.timeout = timeout
 
-    def scan(self) -> dict:
-        """Scan page content for security issues."""
+    def scan(self, crawl_data: dict | None = None) -> dict:
+        """Scan page content for security issues.
+
+        Args:
+            crawl_data: Optional pre-crawled site data from SiteCrawler.
+                        When provided, scans all crawled pages instead of
+                        just the homepage.
+        """
         result = {
             "data_exposure": [],
             "form_security": [],
@@ -49,27 +59,39 @@ class ContentScanner:
             "javascript_risks": [],
             "mixed_content": [],
             "privacy_compliance": {},
+            "app_store_links": {},
             "issues": [],
         }
 
-        try:
-            resp = requests.get(
-                self.url,
-                timeout=self.timeout,
-                headers={"User-Agent": "FinTechThreatAgent/1.0 (Security Audit)"},
-            )
-            html = resp.text
-            soup = BeautifulSoup(html, "html.parser")
-        except requests.RequestException as e:
-            result["issues"].append(f"Failed to fetch content: {e}")
-            return result
+        if crawl_data and crawl_data.get("pages"):
+            # Deep scan mode: use pre-crawled multi-page data
+            html = crawl_data["aggregated_html"]
+            soup = crawl_data["aggregated_soup"]
+            all_links = crawl_data.get("aggregated_links", [])
+            result["app_store_links"] = crawl_data.get("app_store_links", {})
+        else:
+            # Fallback: single-page scan (original behavior)
+            try:
+                resp = requests.get(
+                    self.url,
+                    timeout=self.timeout,
+                    headers={"User-Agent": "FinTechThreatAgent/1.0 (Security Audit)"},
+                )
+                html = resp.text
+                soup = BeautifulSoup(html, "html.parser")
+                all_links = None
+            except requests.RequestException as e:
+                result["issues"].append(f"Failed to fetch content: {e}")
+                return result
 
         result["data_exposure"] = self._check_data_exposure(html)
         result["form_security"] = self._check_forms(soup)
         result["external_resources"] = self._check_external_resources(soup)
         result["javascript_risks"] = self._check_javascript(html, soup)
         result["mixed_content"] = self._check_mixed_content(soup)
-        result["privacy_compliance"] = self._check_privacy_compliance(soup, html)
+        result["privacy_compliance"] = self._check_privacy_compliance(
+            soup, html, precomputed_links=all_links,
+        )
 
         # Summarize issues
         if result["data_exposure"]:
@@ -200,14 +222,25 @@ class ContentScanner:
 
         return mixed
 
-    def _check_privacy_compliance(self, soup: BeautifulSoup, html: str) -> dict:
-        """Check for GDPR/DPDP privacy compliance indicators on the page."""
+    def _check_privacy_compliance(self, soup: BeautifulSoup, html: str,
+                                   precomputed_links: list | None = None) -> dict:
+        """Check for GDPR/DPDP privacy compliance indicators across all pages.
+
+        Args:
+            soup: BeautifulSoup of page(s) HTML
+            html: Raw HTML string (may be aggregated from multiple pages)
+            precomputed_links: Optional pre-extracted (href, text) pairs from crawler
+        """
         html_lower = html.lower()
         all_text = soup.get_text(" ", strip=True).lower()
-        all_links = [
-            (a.get("href", "").lower(), a.get_text(" ", strip=True).lower())
-            for a in soup.find_all("a", href=True)
-        ]
+
+        if precomputed_links is not None:
+            all_links = precomputed_links
+        else:
+            all_links = [
+                (a.get("href", "").lower(), a.get_text(" ", strip=True).lower())
+                for a in soup.find_all("a", href=True)
+            ]
 
         result = {
             "has_privacy_policy": False,
@@ -220,6 +253,7 @@ class ContentScanner:
             "has_third_party_disclosure": False,
             "has_right_to_erasure_info": False,
             "has_dpo_contact": False,
+            "grievance_officer_details": {},
         }
 
         # Privacy policy link
@@ -258,11 +292,35 @@ class ContentScanner:
             result["has_data_processing_notice"] = True
 
         # Grievance officer (Indian regulation - DPDP / IT Act)
-        grievance_keywords = ["grievance officer", "grievance redressal",
-                              "nodal officer", "data protection officer",
-                              "grievance.officer", "grievance@"]
+        # Comprehensive detection across all pages
+        grievance_keywords = [
+            "grievance officer", "grievance redressal", "grievance redressal officer",
+            "nodal officer", "compliance officer", "investor grievance",
+            "grievance.officer", "grievance@", "grievances@",
+            "redressal of grievance", "redressal officer",
+            "grievance redressal mechanism", "investor complaint",
+            "complaint officer", "complaints officer",
+            "designated officer", "appellate authority",
+            "compliance nodal", "investor relations officer",
+        ]
         if any(kw in all_text or kw in html_lower for kw in grievance_keywords):
             result["has_grievance_officer"] = True
+            # Try to extract details
+            result["grievance_officer_details"] = self._extract_grievance_details(
+                all_text, html_lower
+            )
+
+        # Also check link text/href for grievance pages
+        if not result["has_grievance_officer"]:
+            grievance_link_keywords = [
+                "grievance", "complaint", "redressal", "nodal officer",
+                "investor-grievance", "grievance-officer", "complaints",
+            ]
+            for href, text in all_links:
+                combined = href + " " + text
+                if any(kw in combined for kw in grievance_link_keywords):
+                    result["has_grievance_officer"] = True
+                    break
 
         # Opt-out / unsubscribe mechanism
         optout_keywords = ["opt out", "opt-out", "unsubscribe", "withdraw consent",
@@ -296,3 +354,45 @@ class ContentScanner:
             result["has_dpo_contact"] = True
 
         return result
+
+    def _extract_grievance_details(self, all_text: str, html_lower: str) -> dict:
+        """Extract grievance officer contact details from page text."""
+        details = {}
+
+        # Try to extract grievance officer name
+        name_pattern = re.compile(
+            r"(?:grievance\s+(?:redressal\s+)?officer|nodal\s+officer|compliance\s+officer)"
+            r"[\s:–\-]*(?:mr\.?|ms\.?|mrs\.?|dr\.?|shri|smt)?\s*"
+            r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
+            re.IGNORECASE,
+        )
+        name_match = name_pattern.search(all_text)
+        if not name_match:
+            # Also search in HTML for structured content
+            name_match = name_pattern.search(html_lower)
+        if name_match:
+            details["name"] = name_match.group(1).strip()
+
+        # Extract email associated with grievance
+        email_pattern = re.compile(
+            r"(?:grievance|complaint|redressal|nodal|compliance)[^\n]{0,100}?"
+            r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})",
+            re.IGNORECASE,
+        )
+        email_match = email_pattern.search(all_text)
+        if not email_match:
+            email_match = email_pattern.search(html_lower)
+        if email_match:
+            details["email"] = email_match.group(1)
+
+        # Extract phone near grievance context
+        phone_pattern = re.compile(
+            r"(?:grievance|complaint|redressal|nodal|compliance)[^\n]{0,100}?"
+            r"(\+?91[\s-]?\d{10}|\d{10,11})",
+            re.IGNORECASE,
+        )
+        phone_match = phone_pattern.search(all_text)
+        if phone_match:
+            details["phone"] = phone_match.group(1)
+
+        return details

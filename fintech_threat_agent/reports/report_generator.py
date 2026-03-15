@@ -45,6 +45,7 @@ class ReportGenerator:
                      compliance_score: dict | None = None) -> None:
         """Print a full formatted report to the console."""
         self._print_header(url)
+        self._print_crawl_stats(scan_results)
         self._print_scan_overview(scan_results)
         self._print_dual_scores(security_score, compliance_score)
         self._print_threat_summary(threats)
@@ -60,6 +61,53 @@ class ReportGenerator:
         header.append("Agent: FinTech Threat Detection Agent v1.0\n", style="dim")
         header.append("Focus: Indian Fintech Regulatory Compliance", style="dim")
         self.console.print(Panel(header, title="[bold cyan]Security Assessment[/bold cyan]", box=box.DOUBLE))
+        self.console.print()
+
+    def _print_crawl_stats(self, scan_results: dict) -> None:
+        """Display deep crawl statistics."""
+        crawl = scan_results.get("crawl_stats", {})
+        if not crawl:
+            return
+
+        table = Table(title="Deep Crawl Results", box=box.ROUNDED, show_header=True)
+        table.add_column("Metric", style="bold")
+        table.add_column("Value")
+
+        table.add_row("Pages Fetched", str(crawl.get("pages_fetched", 0)))
+        table.add_row("Pages with Content", str(crawl.get("pages_with_content", 0)))
+        table.add_row("URLs Discovered", str(crawl.get("urls_discovered", 0)))
+        table.add_row("Crawl Errors", str(crawl.get("errors", 0)))
+
+        self.console.print(table)
+
+        # Show pages list
+        pages_list = crawl.get("pages_list", [])
+        if pages_list:
+            pages_table = Table(title="Pages Scanned", box=box.SIMPLE, show_header=True)
+            pages_table.add_column("URL", style="cyan", max_width=70)
+            pages_table.add_column("Title", max_width=40)
+            pages_table.add_column("Status", justify="center")
+
+            for page in pages_list[:25]:  # Show max 25 pages
+                status_code = page.get("status", "?")
+                color = "green" if status_code == 200 else "yellow" if status_code in (301, 302) else "red"
+                pages_table.add_row(
+                    page.get("url", ""),
+                    page.get("title", "")[:40],
+                    f"[{color}]{status_code}[/{color}]",
+                )
+
+            if len(pages_list) > 25:
+                pages_table.add_row(f"... and {len(pages_list) - 25} more", "", "")
+
+            self.console.print(pages_table)
+
+        # Show app store links if found
+        app_links = scan_results.get("app_store_links", {})
+        if not app_links:
+            # Check if app store links are in content results via crawl_stats
+            pass
+
         self.console.print()
 
     def _print_scan_overview(self, scan_results: dict) -> None:
@@ -186,17 +234,45 @@ class ReportGenerator:
         self.console.print(table)
         self.console.print()
 
+        # Overall summary
+        total_actionable = summary.get("total_actionable", 0)
+        total_pass = summary.get("pass", 0)
+        total_fail = summary.get("fail", 0)
+        total_warn = summary.get("warning", 0)
+        total_na = summary.get("not_checked", 0)
+
+        if total_actionable > 0:
+            pass_pct = round(total_pass / total_actionable * 100)
+            self.console.print(
+                f"[bold]Overall: {total_pass}/{total_actionable} checks passed ({pass_pct}%)"
+                f"  |  [red]{total_fail} failed[/red]"
+                f"  |  [yellow]{total_warn} warnings[/yellow]"
+                f"  |  [dim]{total_na} not verifiable externally[/dim][/bold]"
+            )
+            self.console.print()
+
         by_reg = summary.get("by_regulation", {})
         if by_reg:
             self.console.print("[bold]Compliance Summary by Regulation:[/bold]")
             for reg, counts in by_reg.items():
-                total = sum(counts.values())
+                actionable = counts.get("total_actionable", 0)
                 passed = counts.get("pass", 0)
-                self.console.print(
-                    f"  {reg}: {passed}/{total} checks passed "
-                    f"([red]{counts.get('fail', 0)} failed[/red], "
-                    f"[yellow]{counts.get('warning', 0)} warnings[/yellow])"
-                )
+                failed = counts.get("fail", 0)
+                warned = counts.get("warning", 0)
+                na = counts.get("not_checked", 0)
+
+                if actionable > 0:
+                    pct = round(passed / actionable * 100)
+                    line = f"  {reg}: {passed}/{actionable} passed ({pct}%)"
+                    if failed:
+                        line += f" | [red]{failed} failed[/red]"
+                    if warned:
+                        line += f" | [yellow]{warned} warnings[/yellow]"
+                    if na:
+                        line += f" | [dim]{na} N/A[/dim]"
+                    self.console.print(line)
+                else:
+                    self.console.print(f"  {reg}: [dim]{na} checks not verifiable externally[/dim]")
             self.console.print()
 
     def _print_footer(self) -> None:
@@ -220,14 +296,18 @@ class ReportGenerator:
         report = {
             "report_metadata": {
                 "tool": "FinTech Threat Detection Agent",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "target_url": url,
                 "scan_date": datetime.now(timezone.utc).isoformat(),
                 "focus": "Indian Fintech Cybersecurity",
+                "scan_mode": "deep_crawl",
             },
             "security_score": security_score or {},
             "compliance_score": compliance_score or {},
-            "scan_results": scan_results,
+            "crawl_stats": scan_results.get("crawl_stats", {}),
+            "scan_results": {
+                k: v for k, v in scan_results.items() if k != "crawl_stats"
+            },
             "threats": [t.to_dict() for t in threats],
             "compliance": {
                 "issues": [c.to_dict() for c in compliance_issues],

@@ -6,6 +6,7 @@ import streamlit as st
 
 from .scanners.url_scanner import URLScanner
 from .scanners.content_scanner import ContentScanner
+from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
@@ -22,16 +23,28 @@ st.caption("Cybersecurity & Compliance Assessment for Indian Fintech Products")
 
 url = st.text_input("Enter fintech product URL", placeholder="https://paytm.com")
 
+col_opt1, col_opt2 = st.columns(2)
+max_pages = col_opt1.number_input("Max pages to crawl", min_value=1, max_value=200, value=50)
+max_depth = col_opt2.number_input("Max crawl depth", min_value=1, max_value=5, value=3)
+
 if st.button("Scan Now", type="primary", disabled=not url):
-    with st.spinner("Scanning target..."):
-        # Scan
+    with st.spinner("Deep crawling website (discovering all pages and sub-pages)..."):
+        # Phase 1: Deep crawl
+        crawler = SiteCrawler(url, max_pages=max_pages, max_depth=max_depth)
+        crawl_data = crawler.crawl()
+
+    with st.spinner(f"Crawled {crawl_data['pages_fetched']} pages. Scanning HTTP, SSL, DNS..."):
+        # Phase 2: URL scanning
         url_scanner = URLScanner(url)
         scan_results = url_scanner.scan_all()
+        scan_results["crawl_stats"] = crawl_data["crawl_stats"]
 
+        # Phase 3: Content scanning across all pages
         content_scanner = ContentScanner(url)
-        content_results = content_scanner.scan()
+        content_results = content_scanner.scan(crawl_data=crawl_data)
 
-        # Analyze
+    with st.spinner("Analyzing threats and compliance..."):
+        # Phase 4: Analyze
         analyzer = ThreatAnalyzer()
         threats = analyzer.analyze(scan_results, content_results)
 
@@ -39,9 +52,42 @@ if st.button("Scan Now", type="primary", disabled=not url):
         compliance_issues = compliance_checker.check(scan_results, content_results)
         compliance_summary = compliance_checker.get_compliance_summary(compliance_issues)
 
-        # Scores
+        # Phase 5: Scores
         security_score = compliance_checker.calculate_security_score(threats)
         compliance_score = compliance_checker.calculate_compliance_score(compliance_issues)
+
+    st.divider()
+
+    # Crawl Stats
+    st.subheader("Deep Crawl Results")
+    crawl_stats = crawl_data["crawl_stats"]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pages Fetched", crawl_stats.get("pages_fetched", 0))
+    c2.metric("Pages with Content", crawl_stats.get("pages_with_content", 0))
+    c3.metric("URLs Discovered", crawl_stats.get("urls_discovered", 0))
+    c4.metric("Crawl Errors", crawl_stats.get("errors", 0))
+
+    # Show pages list
+    pages_list = crawl_stats.get("pages_list", [])
+    if pages_list:
+        with st.expander(f"Pages Scanned ({len(pages_list)})"):
+            pages_data = {
+                "URL": [p["url"] for p in pages_list],
+                "Title": [p.get("title", "")[:50] for p in pages_list],
+                "Status": [p.get("status", "?") for p in pages_list],
+            }
+            st.table(pages_data)
+
+    # App Store Links
+    app_links = content_results.get("app_store_links", {})
+    play_store = app_links.get("play_store", [])
+    app_store = app_links.get("app_store", [])
+    if play_store or app_store:
+        st.subheader("App Store Links Detected")
+        for link in play_store:
+            st.markdown(f"**Google Play Store:** [{link}]({link})")
+        for link in app_store:
+            st.markdown(f"**Apple App Store:** [{link}]({link})")
 
     st.divider()
 
@@ -51,6 +97,22 @@ if st.button("Scan Now", type="primary", disabled=not url):
     col2.metric("Security Rating", security_score["rating"])
     col3.metric("Compliance Score", f"{compliance_score['score']}/100")
     col4.metric("Compliance Rating", compliance_score["rating"])
+
+    # Dynamic compliance summary
+    total_actionable = compliance_summary.get("total_actionable", 0)
+    total_pass = compliance_summary.get("pass", 0)
+    total_fail = compliance_summary.get("fail", 0)
+    total_warn = compliance_summary.get("warning", 0)
+    total_na = compliance_summary.get("not_checked", 0)
+
+    if total_actionable > 0:
+        pass_pct = round(total_pass / total_actionable * 100)
+        st.markdown(
+            f"**{total_pass}/{total_actionable} checks passed ({pass_pct}%)** "
+            f"| :red[{total_fail} failed] "
+            f"| :orange[{total_warn} warnings] "
+            f"| {total_na} not verifiable externally"
+        )
 
     # Threat Summary
     st.subheader("Threat Summary")
