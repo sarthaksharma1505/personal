@@ -89,6 +89,9 @@ class ContentScanner:
         result["external_resources"] = self._check_external_resources(soup)
         result["javascript_risks"] = self._check_javascript(html, soup)
         result["mixed_content"] = self._check_mixed_content(soup)
+        result["sri_issues"] = self._check_subresource_integrity(soup)
+        result["inline_script_analysis"] = self._analyze_inline_scripts(soup)
+        result["meta_security"] = self._check_meta_tags(soup)
         result["privacy_compliance"] = self._check_privacy_compliance(
             soup, html, precomputed_links=all_links,
         )
@@ -221,6 +224,108 @@ class ContentScanner:
                     mixed.append({"tag": tag, "attribute": attr, "url": val})
 
         return mixed
+
+    def _check_subresource_integrity(self, soup: BeautifulSoup) -> list:
+        """Check external scripts and stylesheets for SRI (integrity attribute)."""
+        issues = []
+        parsed_base = urlparse(self.url)
+
+        for script in soup.find_all("script", src=True):
+            src = script["src"]
+            parsed_src = urlparse(urljoin(self.url, src))
+            # Only flag external scripts (CDNs, third-party)
+            if parsed_src.hostname and parsed_src.hostname != parsed_base.hostname:
+                if not script.get("integrity"):
+                    issues.append({
+                        "tag": "script",
+                        "src": src,
+                        "domain": parsed_src.hostname,
+                        "has_integrity": False,
+                    })
+
+        for link in soup.find_all("link", rel="stylesheet", href=True):
+            href = link["href"]
+            parsed_href = urlparse(urljoin(self.url, href))
+            if parsed_href.hostname and parsed_href.hostname != parsed_base.hostname:
+                if not link.get("integrity"):
+                    issues.append({
+                        "tag": "link",
+                        "src": href,
+                        "domain": parsed_href.hostname,
+                        "has_integrity": False,
+                    })
+
+        return issues
+
+    def _analyze_inline_scripts(self, soup: BeautifulSoup) -> dict:
+        """Analyze inline scripts for security concerns."""
+        inline_scripts = soup.find_all("script", src=False)
+        total_inline = len(inline_scripts)
+        total_chars = 0
+        nonce_count = 0
+        event_handler_count = 0
+
+        for script in inline_scripts:
+            code = script.string or ""
+            total_chars += len(code)
+            if script.get("nonce"):
+                nonce_count += 1
+
+        # Count inline event handlers (onclick, onerror, onload, etc.)
+        for tag in soup.find_all(True):
+            for attr in tag.attrs:
+                if attr.lower().startswith("on"):
+                    event_handler_count += 1
+
+        return {
+            "inline_script_count": total_inline,
+            "inline_script_chars": total_chars,
+            "scripts_with_nonce": nonce_count,
+            "event_handler_count": event_handler_count,
+        }
+
+    def _check_meta_tags(self, soup: BeautifulSoup) -> dict:
+        """Check for security-relevant meta tags."""
+        result = {
+            "has_charset": False,
+            "has_viewport": False,
+            "has_x_ua_compatible": False,
+            "has_csp_meta": False,
+            "has_referrer_meta": False,
+            "robots_noindex": False,
+            "sensitive_meta_content": [],
+        }
+
+        for meta in soup.find_all("meta"):
+            charset = meta.get("charset")
+            if charset:
+                result["has_charset"] = True
+
+            name = (meta.get("name") or "").lower()
+            http_equiv = (meta.get("http-equiv") or "").lower()
+            content = meta.get("content", "")
+
+            if name == "viewport":
+                result["has_viewport"] = True
+            if http_equiv == "x-ua-compatible":
+                result["has_x_ua_compatible"] = True
+            if http_equiv == "content-security-policy":
+                result["has_csp_meta"] = True
+            if name == "referrer":
+                result["has_referrer_meta"] = True
+            if name == "robots" and "noindex" in content.lower():
+                result["robots_noindex"] = True
+
+            # Check for sensitive data in meta content
+            if content:
+                for pattern_name, pattern in self.SENSITIVE_PATTERNS.items():
+                    if pattern.search(content):
+                        result["sensitive_meta_content"].append({
+                            "type": pattern_name,
+                            "meta_name": name or http_equiv,
+                        })
+
+        return result
 
     def _check_privacy_compliance(self, soup: BeautifulSoup, html: str,
                                    precomputed_links: list | None = None) -> dict:

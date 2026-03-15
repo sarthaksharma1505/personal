@@ -34,9 +34,12 @@ class ThreatAnalyzer:
         threats = []
         threats.extend(self._analyze_ssl(scan_results.get("ssl", {})))
         threats.extend(self._analyze_headers(scan_results.get("headers", {})))
+        threats.extend(self._analyze_header_quality(scan_results.get("headers", {})))
         threats.extend(self._analyze_http(scan_results.get("http", {})))
         threats.extend(self._analyze_dns(scan_results.get("dns", {})))
         threats.extend(self._analyze_content(content_results))
+        threats.extend(self._analyze_sri(content_results))
+        threats.extend(self._analyze_inline_scripts(content_results))
 
         # Sort by severity
         threats.sort(key=lambda t: self.SEVERITY_ORDER.get(t.severity, 5))
@@ -260,6 +263,130 @@ class ThreatAnalyzer:
                 severity="MEDIUM",
                 recommendation="Avoid eval(), document.write(), and innerHTML. Use safer DOM manipulation methods.",
                 references=["OWASP DOM Based XSS Prevention"],
+            ))
+
+        return threats
+
+    def _analyze_header_quality(self, header_data: dict) -> list[Threat]:
+        """Generate threats from header quality analysis (weak configs)."""
+        threats = []
+        quality = header_data.get("quality", {})
+
+        # HSTS quality issues
+        hsts_q = quality.get("hsts", {})
+        for issue in hsts_q.get("issues", []):
+            severity = "HIGH" if "dangerously short" in issue else "MEDIUM"
+            threats.append(Threat(
+                category="Transport Security",
+                title=f"HSTS Configuration Issue: {issue}",
+                description=f"HSTS header is present but misconfigured: {issue}. "
+                            "Weak HSTS reduces protection against SSL stripping attacks.",
+                severity=severity,
+                recommendation="Set HSTS with max-age of at least 1 year (31536000), "
+                               "include includeSubDomains and preload directives.",
+                references=["OWASP HTTP Strict Transport Security Cheat Sheet"],
+            ))
+
+        # CSP quality issues
+        csp_q = quality.get("csp", {})
+        for issue in csp_q.get("issues", []):
+            severity = "HIGH" if "unsafe-eval" in issue or "Wildcard" in issue else "MEDIUM"
+            threats.append(Threat(
+                category="Injection Protection",
+                title=f"CSP Weakness: {issue}",
+                description=f"Content-Security-Policy is present but weak: {issue}. "
+                            "A permissive CSP may not effectively prevent XSS attacks.",
+                severity=severity,
+                recommendation="Tighten CSP by removing 'unsafe-inline' and 'unsafe-eval'. "
+                               "Use nonces or hashes for inline scripts. Configure report-uri.",
+                references=["OWASP CSP Cheat Sheet", "CSP Evaluator"],
+            ))
+
+        # Referrer-Policy quality
+        ref_q = quality.get("referrer_policy", {})
+        for issue in ref_q.get("issues", []):
+            threats.append(Threat(
+                category="Information Disclosure",
+                title=f"Weak Referrer Policy",
+                description=f"Referrer-Policy is set but uses a weak value: {ref_q.get('value', '')}. "
+                            "Full URLs may be leaked to third-party sites.",
+                severity="LOW",
+                recommendation="Use 'strict-origin-when-cross-origin' or 'no-referrer' for sensitive pages.",
+                references=["MDN Referrer-Policy"],
+            ))
+
+        # Permissions-Policy quality
+        pp_q = quality.get("permissions_policy", {})
+        for issue in pp_q.get("issues", []):
+            threats.append(Threat(
+                category="Privacy",
+                title="Insufficient Permissions-Policy",
+                description=f"Permissions-Policy is present but {issue}. "
+                            "Sensitive browser features may still be accessible to embedded content.",
+                severity="LOW",
+                recommendation="Restrict camera, microphone, geolocation, and payment features "
+                               "in Permissions-Policy header.",
+                references=["W3C Permissions Policy"],
+            ))
+
+        return threats
+
+    def _analyze_sri(self, content_data: dict) -> list[Threat]:
+        """Generate threats for missing Subresource Integrity on external resources."""
+        threats = []
+        sri_issues = content_data.get("sri_issues", [])
+
+        if sri_issues:
+            # Group by domain for cleaner reporting
+            domains = set(i["domain"] for i in sri_issues)
+            count = len(sri_issues)
+            threats.append(Threat(
+                category="Supply Chain Security",
+                title=f"Missing Subresource Integrity ({count} external resource{'s' if count > 1 else ''})",
+                description=f"Found {count} external script(s)/stylesheet(s) from "
+                            f"{', '.join(sorted(domains))} loaded without integrity "
+                            f"attributes. If these CDNs are compromised, malicious code "
+                            f"could be injected into the application.",
+                severity="MEDIUM",
+                recommendation="Add integrity attributes (SRI) to all external scripts and "
+                               "stylesheets. Use tools like srihash.org to generate hashes.",
+                references=["MDN Subresource Integrity", "OWASP Supply Chain Security"],
+            ))
+
+        return threats
+
+    def _analyze_inline_scripts(self, content_data: dict) -> list[Threat]:
+        """Generate threats from inline script analysis."""
+        threats = []
+        analysis = content_data.get("inline_script_analysis", {})
+
+        event_handlers = analysis.get("event_handler_count", 0)
+        if event_handlers > 10:
+            threats.append(Threat(
+                category="JavaScript Security",
+                title=f"Excessive Inline Event Handlers ({event_handlers} found)",
+                description=f"Found {event_handlers} inline event handlers (onclick, onerror, "
+                            f"onload, etc.) in the HTML. Inline event handlers bypass CSP and "
+                            f"increase the attack surface for XSS.",
+                severity="LOW",
+                recommendation="Move event handlers to external JavaScript files. "
+                               "Use addEventListener() instead of inline handlers.",
+                references=["OWASP XSS Prevention"],
+            ))
+
+        inline_count = analysis.get("inline_script_count", 0)
+        nonce_count = analysis.get("scripts_with_nonce", 0)
+        if inline_count > 0 and nonce_count == 0:
+            threats.append(Threat(
+                category="Injection Protection",
+                title=f"Inline Scripts Without Nonces ({inline_count} scripts)",
+                description=f"Found {inline_count} inline script(s) without nonce attributes. "
+                            f"Without nonces, a strict CSP cannot distinguish legitimate inline "
+                            f"scripts from injected ones.",
+                severity="LOW",
+                recommendation="Add nonce attributes to inline scripts and configure CSP "
+                               "to require matching nonces.",
+                references=["OWASP CSP Cheat Sheet"],
             ))
 
         return threats

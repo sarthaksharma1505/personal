@@ -52,6 +52,8 @@ class URLScanner:
             "dns": self._scan_dns(),
             "headers": self._scan_headers(),
         }
+        # Enrich header results with quality analysis
+        self._analyze_header_quality(results["headers"])
         return results
 
     def _scan_http(self) -> dict:
@@ -63,6 +65,7 @@ class URLScanner:
             "uses_https": self.parsed.scheme == "https",
             "http_to_https_redirect": False,
             "response_time_ms": None,
+            "http_version": None,
             "errors": [],
         }
 
@@ -77,6 +80,16 @@ class URLScanner:
             result["status_code"] = resp.status_code
             result["response_time_ms"] = round(resp.elapsed.total_seconds() * 1000)
             result["redirect_chain"] = [r.url for r in resp.history]
+
+            # Detect HTTP version from raw response
+            if hasattr(resp.raw, "version"):
+                ver = resp.raw.version
+                if ver == 20:
+                    result["http_version"] = "HTTP/2"
+                elif ver == 11:
+                    result["http_version"] = "HTTP/1.1"
+                elif ver == 10:
+                    result["http_version"] = "HTTP/1.0"
 
             # Check HTTP -> HTTPS redirect
             if not result["uses_https"]:
@@ -308,3 +321,80 @@ class URLScanner:
             )
 
         return result
+
+    def _analyze_header_quality(self, header_result: dict) -> None:
+        """Analyze quality/strictness of present security headers.
+
+        Adds a 'quality' dict to the header result with granular assessments
+        that help differentiate sites beyond just present/absent.
+        """
+        present = header_result.get("present", {})
+        quality = {}
+
+        # HSTS quality
+        hsts = present.get("Strict-Transport-Security", "")
+        if hsts:
+            hsts_info = {"present": True, "issues": []}
+            if "max-age=" in hsts:
+                try:
+                    max_age = int(hsts.split("max-age=")[1].split(";")[0].strip())
+                    hsts_info["max_age"] = max_age
+                    if max_age < 15768000:  # Less than 6 months
+                        hsts_info["issues"].append("max-age too short (< 6 months)")
+                    if max_age < 2592000:  # Less than 30 days
+                        hsts_info["issues"].append("max-age dangerously short (< 30 days)")
+                except (ValueError, IndexError):
+                    pass
+            if "includesubdomains" not in hsts.lower():
+                hsts_info["issues"].append("Missing includeSubDomains")
+            if "preload" not in hsts.lower():
+                hsts_info["issues"].append("Missing preload directive")
+            quality["hsts"] = hsts_info
+
+        # CSP quality
+        csp = present.get("Content-Security-Policy", "")
+        if csp:
+            csp_info = {"present": True, "issues": []}
+            csp_lower = csp.lower()
+            if "'unsafe-inline'" in csp_lower:
+                csp_info["issues"].append("Allows unsafe-inline (weakens XSS protection)")
+            if "'unsafe-eval'" in csp_lower:
+                csp_info["issues"].append("Allows unsafe-eval (enables eval-based attacks)")
+            if "default-src" not in csp_lower and "script-src" not in csp_lower:
+                csp_info["issues"].append("No default-src or script-src directive")
+            if "*" in csp and ("script-src *" in csp_lower or "default-src *" in csp_lower):
+                csp_info["issues"].append("Wildcard source allows any origin")
+            if "report-uri" not in csp_lower and "report-to" not in csp_lower:
+                csp_info["issues"].append("No CSP violation reporting configured")
+            quality["csp"] = csp_info
+
+        # Referrer-Policy quality
+        ref = present.get("Referrer-Policy", "")
+        if ref:
+            ref_info = {"present": True, "value": ref, "issues": []}
+            weak_policies = ("unsafe-url", "no-referrer-when-downgrade")
+            if ref.lower() in weak_policies:
+                ref_info["issues"].append(f"Weak referrer policy: {ref}")
+            quality["referrer_policy"] = ref_info
+
+        # X-Frame-Options quality
+        xfo = present.get("X-Frame-Options", "")
+        if xfo:
+            xfo_info = {"present": True, "value": xfo.upper(), "issues": []}
+            if xfo.upper() == "ALLOW-FROM":
+                xfo_info["issues"].append("ALLOW-FROM is deprecated and inconsistently supported")
+            elif xfo.upper() not in ("DENY", "SAMEORIGIN"):
+                xfo_info["issues"].append(f"Non-standard value: {xfo}")
+            quality["x_frame_options"] = xfo_info
+
+        # Permissions-Policy quality
+        pp = present.get("Permissions-Policy", "")
+        if pp:
+            pp_info = {"present": True, "issues": []}
+            critical_features = ["camera", "microphone", "geolocation", "payment"]
+            restricted = sum(1 for f in critical_features if f in pp.lower())
+            if restricted == 0:
+                pp_info["issues"].append("Does not restrict critical features (camera, microphone, geolocation, payment)")
+            quality["permissions_policy"] = pp_info
+
+        header_result["quality"] = quality
