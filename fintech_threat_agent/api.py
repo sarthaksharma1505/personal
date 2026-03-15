@@ -76,7 +76,11 @@ async def scan_url(request: ScanRequest):
         compliance_issues = compliance.check(scan_results, content_results)
         compliance_summary = compliance.get_compliance_summary(compliance_issues)
 
-        # Phase 3: Build response
+        # Phase 3: Calculate scores
+        security_score = compliance.calculate_security_score(threats)
+        compliance_score = compliance.calculate_compliance_score(compliance_issues)
+
+        # Phase 4: Build response
         reporter = ReportGenerator()
         json_str = reporter.export_json(
             url=request.url,
@@ -84,6 +88,8 @@ async def scan_url(request: ScanRequest):
             compliance_issues=compliance_issues,
             compliance_summary=compliance_summary,
             scan_results=scan_results,
+            security_score=security_score,
+            compliance_score=compliance_score,
         )
 
         return ScanResponse(success=True, data=json.loads(json_str))

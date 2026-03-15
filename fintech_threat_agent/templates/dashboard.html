@@ -28,7 +28,7 @@
             font-size: 14px;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
             padding: 30px 20px;
         }
@@ -116,34 +116,46 @@
         .results { display: none; }
         .results.active { display: block; }
 
-        /* Risk Score */
-        .risk-card {
+        /* Dual Score Cards */
+        .scores-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .score-card {
             background: #111827;
             border-radius: 12px;
-            padding: 28px;
+            padding: 24px;
             text-align: center;
-            margin-bottom: 24px;
             border: 1px solid #1e3a5f;
         }
-        .risk-score {
-            font-size: 64px;
-            font-weight: 800;
-            margin: 10px 0;
+        .score-card .score-title {
+            font-size: 13px;
+            color: #8899aa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
         }
-        .risk-label {
-            font-size: 20px;
+        .score-card .score-value {
+            font-size: 56px;
+            font-weight: 800;
+            margin: 6px 0;
+        }
+        .score-card .score-label {
+            font-size: 16px;
             font-weight: 600;
             margin-bottom: 10px;
         }
-        .risk-bar-bg {
+        .score-bar-bg {
             background: #1e293b;
             border-radius: 10px;
-            height: 16px;
-            max-width: 400px;
-            margin: 12px auto;
+            height: 12px;
+            max-width: 300px;
+            margin: 10px auto;
             overflow: hidden;
         }
-        .risk-bar-fill {
+        .score-bar-fill {
             height: 100%;
             border-radius: 10px;
             transition: width 1s ease;
@@ -163,7 +175,7 @@
         /* Summary Cards */
         .summary-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 14px;
             margin-bottom: 24px;
         }
@@ -171,21 +183,21 @@
             background: #111827;
             border: 1px solid #1e3a5f;
             border-radius: 10px;
-            padding: 18px;
+            padding: 16px;
             text-align: center;
         }
         .summary-card .count {
-            font-size: 32px;
+            font-size: 28px;
             font-weight: 700;
         }
         .summary-card .label {
-            font-size: 12px;
+            font-size: 11px;
             color: #8899aa;
             text-transform: uppercase;
             margin-top: 4px;
         }
 
-        /* Scan Overview */
+        /* Sections */
         .section {
             background: #111827;
             border: 1px solid #1e3a5f;
@@ -227,6 +239,25 @@
         .status-fail { color: #ff4444; font-weight: 600; }
         .status-warn { color: #ffcc00; font-weight: 600; }
         .status-na { color: #667788; }
+
+        /* Regulation group header in compliance table */
+        .reg-group-header td {
+            background: #0d1b2a;
+            font-weight: 700;
+            color: #00d4ff;
+            font-size: 13px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #1e3a5f;
+        }
+        .reg-score-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #000;
+            margin-left: 8px;
+        }
 
         /* Threat Cards */
         .threat-card {
@@ -295,19 +326,23 @@
             margin-top: 16px;
         }
         .btn-export:hover { background: #254a72; }
+
+        @media (max-width: 700px) {
+            .scores-row { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>FinTech Threat Detection Agent</h1>
-        <p>Cybersecurity Assessment for Indian Fintech Products</p>
+        <p>Cybersecurity &amp; Compliance Assessment for Indian Fintech Products</p>
     </div>
 
     <div class="container">
         <!-- Scan Input -->
         <div class="scan-box">
             <h2>Scan a Fintech Product</h2>
-            <p>Paste any fintech product URL to detect security threats and check regulatory compliance</p>
+            <p>Paste any fintech product URL to detect security threats and check regulatory compliance (SEBI, RBI, DPDP, GDPR, VAPT, PCI DSS)</p>
             <div class="input-row">
                 <input type="text" id="urlInput" placeholder="e.g. https://paytm.com" />
                 <button class="btn-scan" id="scanBtn" onclick="startScan()">Scan Now</button>
@@ -325,12 +360,20 @@
 
         <!-- Results -->
         <div class="results" id="results">
-            <!-- Risk Score -->
-            <div class="risk-card" id="riskCard">
-                <div>Security Score</div>
-                <div class="risk-score" id="riskScore">--</div>
-                <div class="risk-label" id="riskLabel">--</div>
-                <div class="risk-bar-bg"><div class="risk-bar-fill" id="riskBar"></div></div>
+            <!-- Dual Score Cards -->
+            <div class="scores-row">
+                <div class="score-card" id="secScoreCard">
+                    <div class="score-title">Security Score</div>
+                    <div class="score-value" id="secScoreValue">--</div>
+                    <div class="score-label" id="secScoreLabel">--</div>
+                    <div class="score-bar-bg"><div class="score-bar-fill" id="secScoreBar"></div></div>
+                </div>
+                <div class="score-card" id="compScoreCard">
+                    <div class="score-title">Compliance Score</div>
+                    <div class="score-value" id="compScoreValue">--</div>
+                    <div class="score-label" id="compScoreLabel">--</div>
+                    <div class="score-bar-bg"><div class="score-bar-fill" id="compScoreBar"></div></div>
+                </div>
             </div>
 
             <!-- Threat Summary -->
@@ -352,11 +395,11 @@
 
             <!-- Compliance -->
             <div class="section">
-                <div class="section-title">Indian Regulatory Compliance</div>
+                <div class="section-title">Regulatory Compliance Assessment</div>
                 <div class="section-body">
                     <table id="complianceTable">
                         <thead>
-                            <tr><th>Regulation</th><th>Section</th><th>Requirement</th><th>Status</th></tr>
+                            <tr><th>Section</th><th>Requirement</th><th>Status</th><th>Details</th></tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -382,12 +425,26 @@ function startScan() {
     document.getElementById('results').classList.remove('active');
     document.getElementById('errorBox').classList.remove('active');
 
-    const msgs = ['Scanning HTTP connectivity...', 'Checking SSL/TLS...', 'Analyzing DNS records...', 'Scanning security headers...', 'Analyzing page content...', 'Checking regulatory compliance...', 'Generating report...'];
+    const msgs = [
+        'Scanning HTTP connectivity...',
+        'Checking SSL/TLS configuration...',
+        'Analyzing DNS records...',
+        'Scanning security headers...',
+        'Analyzing page content...',
+        'Checking SEBI CSCRF compliance...',
+        'Checking RBI DPSC compliance...',
+        'Checking DPDP Act compliance...',
+        'Checking GDPR compliance...',
+        'Running VAPT baseline checks...',
+        'Checking PCI DSS requirements...',
+        'Calculating scores...',
+        'Generating report...'
+    ];
     let mi = 0;
     const msgInterval = setInterval(() => {
         mi = (mi + 1) % msgs.length;
         document.getElementById('loadingText').textContent = msgs[mi];
-    }, 2500);
+    }, 2000);
 
     fetch('/scan', {
         method: 'POST',
@@ -420,42 +477,41 @@ function showError(msg) {
     box.classList.add('active');
 }
 
+function scoreColor(score) {
+    if (score >= 80) return '#44cc44';
+    if (score >= 60) return '#ffcc00';
+    if (score >= 40) return '#ff8800';
+    return '#ff4444';
+}
+
 function renderResults(data) {
     const threats = data.threats || [];
     const compliance = data.compliance || {};
     const scan = data.scan_results || {};
+    const secScore = data.security_score || {};
+    const compScore = data.compliance_score || {};
 
-    // Risk score — penalties per finding, capped per category (max 20 pts each)
-    let score = 100;
-    const penalties = { CRITICAL: 12, HIGH: 7, MEDIUM: 3, LOW: 1, INFO: 0 };
-    const catPenalties = {};
-    const CAT_CAP = 20;
-    threats.forEach(t => {
-        const cat = t.category || 'other';
-        catPenalties[cat] = (catPenalties[cat] || 0) + (penalties[t.severity] || 0);
-    });
-    Object.values(catPenalties).forEach(p => { score -= Math.min(p, CAT_CAP); });
-    let compPenalty = 0;
-    (compliance.issues || []).forEach(c => {
-        if (c.status === 'FAIL') compPenalty += 3;
-        else if (c.status === 'WARNING') compPenalty += 1;
-    });
-    score -= Math.min(compPenalty, CAT_CAP);
-    score = Math.max(0, Math.min(100, score));
+    // Security Score
+    const ss = secScore.score != null ? secScore.score : 0;
+    const ssColor = scoreColor(ss);
+    document.getElementById('secScoreValue').textContent = ss;
+    document.getElementById('secScoreValue').style.color = ssColor;
+    document.getElementById('secScoreLabel').textContent = secScore.rating || '';
+    document.getElementById('secScoreLabel').style.color = ssColor;
+    const secBar = document.getElementById('secScoreBar');
+    secBar.style.width = ss + '%';
+    secBar.style.background = ssColor;
 
-    let rating, color;
-    if (score >= 80) { rating = 'LOW RISK'; color = '#44cc44'; }
-    else if (score >= 60) { rating = 'MODERATE RISK'; color = '#ffcc00'; }
-    else if (score >= 40) { rating = 'HIGH RISK'; color = '#ff8800'; }
-    else { rating = 'CRITICAL RISK'; color = '#ff4444'; }
-
-    document.getElementById('riskScore').textContent = score;
-    document.getElementById('riskScore').style.color = color;
-    document.getElementById('riskLabel').textContent = rating;
-    document.getElementById('riskLabel').style.color = color;
-    const bar = document.getElementById('riskBar');
-    bar.style.width = score + '%';
-    bar.style.background = color;
+    // Compliance Score
+    const cs = compScore.score != null ? compScore.score : 0;
+    const csColor = scoreColor(cs);
+    document.getElementById('compScoreValue').textContent = cs;
+    document.getElementById('compScoreValue').style.color = csColor;
+    document.getElementById('compScoreLabel').textContent = compScore.rating || '';
+    document.getElementById('compScoreLabel').style.color = csColor;
+    const compBar = document.getElementById('compScoreBar');
+    compBar.style.width = cs + '%';
+    compBar.style.background = csColor;
 
     // Summary cards
     const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
@@ -466,8 +522,10 @@ function renderResults(data) {
         grid.innerHTML += `<div class="summary-card"><div class="count ${cls}">${counts[sev]}</div><div class="label">${sev}</div></div>`;
     });
     const compPass = (compliance.issues || []).filter(c => c.status === 'PASS').length;
+    const compFail = (compliance.issues || []).filter(c => c.status === 'FAIL').length;
     const compTotal = (compliance.issues || []).length;
-    grid.innerHTML += `<div class="summary-card"><div class="count" style="color:#00d4ff">${compPass}/${compTotal}</div><div class="label">Compliance</div></div>`;
+    grid.innerHTML += `<div class="summary-card"><div class="count status-pass">${compPass}</div><div class="label">Checks Passed</div></div>`;
+    grid.innerHTML += `<div class="summary-card"><div class="count status-fail">${compFail}</div><div class="label">Checks Failed</div></div>`;
 
     // Overview table
     const http = scan.http || {};
@@ -506,13 +564,29 @@ function renderResults(data) {
         }).join('');
     }
 
-    // Compliance
+    // Compliance — grouped by regulation with per-regulation score
     const ctbody = document.querySelector('#complianceTable tbody');
     ctbody.innerHTML = '';
+    const compBreakdown = compScore.breakdown || {};
+    const issuesByReg = {};
     (compliance.issues || []).forEach(c => {
-        const statusCls = c.status === 'PASS' ? 'status-pass' : c.status === 'FAIL' ? 'status-fail' : c.status === 'WARNING' ? 'status-warn' : 'status-na';
-        const statusText = c.status === 'NOT_CHECKED' ? 'N/A' : c.status;
-        ctbody.innerHTML += `<tr><td>${c.regulation}</td><td>${c.section || ''}</td><td>${c.requirement}</td><td class="${statusCls}">${statusText}</td></tr>`;
+        const reg = c.regulation;
+        if (!issuesByReg[reg]) issuesByReg[reg] = [];
+        issuesByReg[reg].push(c);
+    });
+
+    Object.entries(issuesByReg).forEach(([reg, regIssues]) => {
+        const regPct = compBreakdown[reg];
+        const regBadgeColor = regPct != null ? scoreColor(regPct) : '#667788';
+        const regBadge = regPct != null
+            ? `<span class="reg-score-badge" style="background:${regBadgeColor}">${regPct}%</span>`
+            : '';
+        ctbody.innerHTML += `<tr class="reg-group-header"><td colspan="4">${reg} ${regBadge}</td></tr>`;
+        regIssues.forEach(c => {
+            const statusCls = c.status === 'PASS' ? 'status-pass' : c.status === 'FAIL' ? 'status-fail' : c.status === 'WARNING' ? 'status-warn' : 'status-na';
+            const statusText = c.status === 'NOT_CHECKED' ? 'N/A' : c.status;
+            ctbody.innerHTML += `<tr><td>${c.section || ''}</td><td>${c.requirement}</td><td class="${statusCls}">${statusText}</td><td style="color:#778899;font-size:12px">${c.details || ''}</td></tr>`;
+        });
     });
 
     document.getElementById('results').classList.add('active');
