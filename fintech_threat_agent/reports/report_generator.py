@@ -170,18 +170,29 @@ class ReportGenerator:
             self.console.print()
 
     def _print_risk_score(self, threats: list, compliance_issues: list) -> None:
-        """Calculate and display an overall risk score."""
+        """Calculate and display an overall risk score.
+
+        Uses per-category caps (max 20 points per category) so a single
+        category with many findings cannot drain the entire score.
+        """
         score = 100
-        severity_penalties = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3, "INFO": 0}
+        severity_penalties = {"CRITICAL": 12, "HIGH": 7, "MEDIUM": 3, "LOW": 1, "INFO": 0}
+        cat_cap = 20
 
+        cat_penalties: dict[str, int] = {}
         for t in threats:
-            score -= severity_penalties.get(t.severity, 0)
+            cat = t.category
+            cat_penalties[cat] = cat_penalties.get(cat, 0) + severity_penalties.get(t.severity, 0)
+        for penalty in cat_penalties.values():
+            score -= min(penalty, cat_cap)
 
+        comp_penalty = 0
         for c in compliance_issues:
             if c.status == "FAIL":
-                score -= 5
+                comp_penalty += 3
             elif c.status == "WARNING":
-                score -= 2
+                comp_penalty += 1
+        score -= min(comp_penalty, cat_cap)
 
         score = max(0, min(100, score))
 

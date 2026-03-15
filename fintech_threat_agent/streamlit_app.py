@@ -39,16 +39,23 @@ if st.button("Scan Now", type="primary", disabled=not url):
         compliance_issues = compliance.check(scan_results, content_results)
         compliance_summary = compliance.get_compliance_summary(compliance_issues)
 
-    # Risk Score
+    # Risk Score — per-category caps to prevent score from always hitting 0
     score = 100
-    penalties = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3, "INFO": 0}
+    penalties = {"CRITICAL": 12, "HIGH": 7, "MEDIUM": 3, "LOW": 1, "INFO": 0}
+    cat_cap = 20
+    cat_penalties = {}
     for t in threats:
-        score -= penalties.get(t.severity, 0)
+        cat = t.category
+        cat_penalties[cat] = cat_penalties.get(cat, 0) + penalties.get(t.severity, 0)
+    for penalty in cat_penalties.values():
+        score -= min(penalty, cat_cap)
+    comp_penalty = 0
     for c in compliance_issues:
         if c.status == "FAIL":
-            score -= 5
+            comp_penalty += 3
         elif c.status == "WARNING":
-            score -= 2
+            comp_penalty += 1
+    score -= min(comp_penalty, cat_cap)
     score = max(0, min(100, score))
 
     if score >= 80:
