@@ -48,6 +48,7 @@ class ContentScanner:
             "external_resources": [],
             "javascript_risks": [],
             "mixed_content": [],
+            "privacy_compliance": {},
             "issues": [],
         }
 
@@ -68,6 +69,7 @@ class ContentScanner:
         result["external_resources"] = self._check_external_resources(soup)
         result["javascript_risks"] = self._check_javascript(html, soup)
         result["mixed_content"] = self._check_mixed_content(soup)
+        result["privacy_compliance"] = self._check_privacy_compliance(soup, html)
 
         # Summarize issues
         if result["data_exposure"]:
@@ -197,3 +199,100 @@ class ContentScanner:
                     mixed.append({"tag": tag, "attribute": attr, "url": val})
 
         return mixed
+
+    def _check_privacy_compliance(self, soup: BeautifulSoup, html: str) -> dict:
+        """Check for GDPR/DPDP privacy compliance indicators on the page."""
+        html_lower = html.lower()
+        all_text = soup.get_text(" ", strip=True).lower()
+        all_links = [
+            (a.get("href", "").lower(), a.get_text(" ", strip=True).lower())
+            for a in soup.find_all("a", href=True)
+        ]
+
+        result = {
+            "has_privacy_policy": False,
+            "has_cookie_consent": False,
+            "has_terms_of_service": False,
+            "has_data_processing_notice": False,
+            "has_grievance_officer": False,
+            "has_opt_out_mechanism": False,
+            "has_data_retention_info": False,
+            "has_third_party_disclosure": False,
+            "has_right_to_erasure_info": False,
+            "has_dpo_contact": False,
+        }
+
+        # Privacy policy link
+        privacy_keywords = ["privacy policy", "privacy notice", "data protection",
+                            "privacy statement", "privacy-policy", "privacypolicy"]
+        for href, text in all_links:
+            combined = href + " " + text
+            if any(kw in combined for kw in privacy_keywords):
+                result["has_privacy_policy"] = True
+                break
+
+        # Cookie consent banner / mechanism
+        cookie_indicators = [
+            "cookie consent", "cookie policy", "cookie banner", "accept cookies",
+            "cookie preferences", "manage cookies", "cookie-consent", "cookieconsent",
+            "cookie_consent", "gdpr-cookie", "cookie-notice", "cc-banner",
+            "cookie-law", "onetrust", "cookiebot", "trustarc",
+        ]
+        if any(kw in html_lower for kw in cookie_indicators):
+            result["has_cookie_consent"] = True
+
+        # Terms of service
+        tos_keywords = ["terms of service", "terms and conditions", "terms of use",
+                        "terms-of-service", "terms-and-conditions", "user agreement"]
+        for href, text in all_links:
+            combined = href + " " + text
+            if any(kw in combined for kw in tos_keywords):
+                result["has_terms_of_service"] = True
+                break
+
+        # Data processing / lawful basis notice
+        dp_keywords = ["data processing", "lawful basis", "legitimate interest",
+                       "consent for processing", "purpose of collection",
+                       "data we collect", "information we collect"]
+        if any(kw in all_text for kw in dp_keywords):
+            result["has_data_processing_notice"] = True
+
+        # Grievance officer (Indian regulation - DPDP / IT Act)
+        grievance_keywords = ["grievance officer", "grievance redressal",
+                              "nodal officer", "data protection officer",
+                              "grievance.officer", "grievance@"]
+        if any(kw in all_text or kw in html_lower for kw in grievance_keywords):
+            result["has_grievance_officer"] = True
+
+        # Opt-out / unsubscribe mechanism
+        optout_keywords = ["opt out", "opt-out", "unsubscribe", "withdraw consent",
+                           "revoke consent", "do not sell"]
+        if any(kw in all_text for kw in optout_keywords):
+            result["has_opt_out_mechanism"] = True
+
+        # Data retention info
+        retention_keywords = ["data retention", "retention period", "how long we keep",
+                              "retention policy", "data storage period"]
+        if any(kw in all_text for kw in retention_keywords):
+            result["has_data_retention_info"] = True
+
+        # Third-party data sharing disclosure
+        tp_keywords = ["third party", "third-party", "data sharing", "share your data",
+                       "share your information", "partners and affiliates"]
+        if any(kw in all_text for kw in tp_keywords):
+            result["has_third_party_disclosure"] = True
+
+        # Right to erasure / deletion
+        erasure_keywords = ["right to erasure", "right to deletion", "delete your data",
+                            "delete my account", "data deletion", "right to be forgotten",
+                            "erase your data"]
+        if any(kw in all_text for kw in erasure_keywords):
+            result["has_right_to_erasure_info"] = True
+
+        # DPO / data protection officer contact
+        dpo_keywords = ["data protection officer", "dpo@", "dpo contact",
+                        "privacy@", "privacy officer"]
+        if any(kw in all_text or kw in html_lower for kw in dpo_keywords):
+            result["has_dpo_contact"] = True
+
+        return result

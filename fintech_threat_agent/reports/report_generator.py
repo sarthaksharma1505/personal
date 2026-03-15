@@ -40,14 +40,16 @@ class ReportGenerator:
         self.console = Console()
 
     def print_report(self, url: str, threats: list, compliance_issues: list,
-                     compliance_summary: dict, scan_results: dict) -> None:
+                     compliance_summary: dict, scan_results: dict,
+                     security_score: dict | None = None,
+                     compliance_score: dict | None = None) -> None:
         """Print a full formatted report to the console."""
         self._print_header(url)
         self._print_scan_overview(scan_results)
+        self._print_dual_scores(security_score, compliance_score)
         self._print_threat_summary(threats)
         self._print_threat_details(threats)
         self._print_compliance_report(compliance_issues, compliance_summary)
-        self._print_risk_score(threats, compliance_issues)
         self._print_footer()
 
     def _print_header(self, url: str) -> None:
@@ -70,40 +72,69 @@ class ReportGenerator:
         ssl = scan_results.get("ssl", {})
         dns = scan_results.get("dns", {})
 
-        # HTTP
         reachable = http.get("reachable", False)
         table.add_row(
             "HTTP Connectivity",
             "[green]Reachable[/green]" if reachable else "[red]Unreachable[/red]",
             f"Status {http.get('status_code', 'N/A')} | {http.get('response_time_ms', 'N/A')}ms",
         )
-
-        # HTTPS
         table.add_row(
             "HTTPS",
             "[green]Yes[/green]" if http.get("uses_https") else "[red]No[/red]",
             "Encrypted connection" if http.get("uses_https") else "Plaintext connection",
         )
-
-        # SSL
         table.add_row(
             "SSL/TLS",
             "[green]Active[/green]" if ssl.get("has_ssl") else "[red]None[/red]",
             ssl.get("protocol_version", "N/A"),
         )
 
-        # Certificate
         cert = ssl.get("certificate", {})
         if cert:
             days = cert.get("days_until_expiry", "?")
             color = "green" if isinstance(days, int) and days > 30 else "yellow" if isinstance(days, int) and days > 0 else "red"
             table.add_row("Certificate", f"[{color}]{days} days left[/{color}]", cert.get("issuer_org", "N/A"))
 
-        # DNS
         table.add_row("SPF Record", "[green]Found[/green]" if dns.get("has_spf") else "[red]Missing[/red]", "")
         table.add_row("DMARC Record", "[green]Found[/green]" if dns.get("has_dmarc") else "[red]Missing[/red]", "")
 
         self.console.print(table)
+        self.console.print()
+
+    def _print_dual_scores(self, security_score: dict | None, compliance_score: dict | None) -> None:
+        """Display both security and compliance scores side by side."""
+        score_text = Text()
+
+        if security_score:
+            sec = security_score["score"]
+            sec_color = "green" if sec >= 80 else "yellow" if sec >= 60 else "red" if sec >= 40 else "bold red"
+            bar_len = 30
+            filled = int(sec / 100 * bar_len)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            score_text.append("SECURITY SCORE\n", style="bold white")
+            score_text.append(f"  {sec}/100 — {security_score['rating']}\n", style=sec_color)
+            score_text.append(f"  [{bar}]\n\n", style=sec_color)
+
+        if compliance_score:
+            comp = compliance_score["score"]
+            comp_color = "green" if comp >= 80 else "yellow" if comp >= 60 else "red" if comp >= 40 else "bold red"
+            bar_len = 30
+            filled = int(comp / 100 * bar_len)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            score_text.append("COMPLIANCE SCORE\n", style="bold white")
+            score_text.append(f"  {comp}/100 — {compliance_score['rating']}\n", style=comp_color)
+            score_text.append(f"  [{bar}]\n", style=comp_color)
+
+            # Per-regulation breakdown
+            breakdown = compliance_score.get("breakdown", {})
+            if breakdown:
+                score_text.append("\n  Per-Regulation Breakdown:\n", style="dim")
+                for reg, reg_score in sorted(breakdown.items()):
+                    reg_color = "green" if reg_score >= 80 else "yellow" if reg_score >= 60 else "red"
+                    score_text.append(f"    {reg}: ", style="dim")
+                    score_text.append(f"{reg_score}%\n", style=reg_color)
+
+        self.console.print(Panel(score_text, title="[bold]Risk Assessment[/bold]", box=box.DOUBLE))
         self.console.print()
 
     def _print_threat_summary(self, threats: list) -> None:
@@ -142,10 +173,10 @@ class ReportGenerator:
         self.console.print()
 
     def _print_compliance_report(self, issues: list, summary: dict) -> None:
-        table = Table(title="Indian Fintech Regulatory Compliance", box=box.ROUNDED, show_header=True)
+        table = Table(title="Regulatory Compliance Assessment", box=box.ROUNDED, show_header=True)
         table.add_column("Regulation", style="bold", max_width=20)
-        table.add_column("Section", max_width=25)
-        table.add_column("Requirement", max_width=35)
+        table.add_column("Section", max_width=30)
+        table.add_column("Requirement", max_width=40)
         table.add_column("Status", justify="center")
 
         for issue in issues:
@@ -155,7 +186,6 @@ class ReportGenerator:
         self.console.print(table)
         self.console.print()
 
-        # Compliance summary by regulation
         by_reg = summary.get("by_regulation", {})
         if by_reg:
             self.console.print("[bold]Compliance Summary by Regulation:[/bold]")
@@ -169,53 +199,6 @@ class ReportGenerator:
                 )
             self.console.print()
 
-    def _print_risk_score(self, threats: list, compliance_issues: list) -> None:
-        """Calculate and display an overall risk score.
-
-        Uses per-category caps (max 20 points per category) so a single
-        category with many findings cannot drain the entire score.
-        """
-        score = 100
-        severity_penalties = {"CRITICAL": 12, "HIGH": 7, "MEDIUM": 3, "LOW": 1, "INFO": 0}
-        cat_cap = 20
-
-        cat_penalties: dict[str, int] = {}
-        for t in threats:
-            cat = t.category
-            cat_penalties[cat] = cat_penalties.get(cat, 0) + severity_penalties.get(t.severity, 0)
-        for penalty in cat_penalties.values():
-            score -= min(penalty, cat_cap)
-
-        comp_penalty = 0
-        for c in compliance_issues:
-            if c.status == "FAIL":
-                comp_penalty += 3
-            elif c.status == "WARNING":
-                comp_penalty += 1
-        score -= min(comp_penalty, cat_cap)
-
-        score = max(0, min(100, score))
-
-        if score >= 80:
-            rating, color = "LOW RISK", "green"
-        elif score >= 60:
-            rating, color = "MODERATE RISK", "yellow"
-        elif score >= 40:
-            rating, color = "HIGH RISK", "red"
-        else:
-            rating, color = "CRITICAL RISK", "bold red"
-
-        score_text = Text()
-        score_text.append(f"Security Score: {score}/100\n", style=f"bold {color}")
-        score_text.append(f"Risk Rating: {rating}\n\n", style=color)
-
-        bar_len = 40
-        filled = int(score / 100 * bar_len)
-        bar = "█" * filled + "░" * (bar_len - filled)
-        score_text.append(f"  [{bar}]  {score}%\n", style=color)
-
-        self.console.print(Panel(score_text, title="[bold]Overall Risk Assessment[/bold]", box=box.DOUBLE))
-
     def _print_footer(self) -> None:
         self.console.print()
         footer = Text()
@@ -223,14 +206,16 @@ class ReportGenerator:
         footer.append(
             "This is an automated external scan. It does not replace a comprehensive "
             "penetration test or internal security audit. Some checks (e.g., data localization, "
-            "internal API security) require manual verification. Results should be validated "
-            "by a qualified security professional."
+            "internal API security, VAPT certification) require manual verification. Results "
+            "should be validated by a qualified security professional."
         )
         self.console.print(Panel(footer, box=box.ROUNDED))
         self.console.print()
 
     def export_json(self, url: str, threats: list, compliance_issues: list,
-                    compliance_summary: dict, scan_results: dict) -> str:
+                    compliance_summary: dict, scan_results: dict,
+                    security_score: dict | None = None,
+                    compliance_score: dict | None = None) -> str:
         """Export results as JSON."""
         report = {
             "report_metadata": {
@@ -240,6 +225,8 @@ class ReportGenerator:
                 "scan_date": datetime.now(timezone.utc).isoformat(),
                 "focus": "Indian Fintech Cybersecurity",
             },
+            "security_score": security_score or {},
+            "compliance_score": compliance_score or {},
             "scan_results": scan_results,
             "threats": [t.to_dict() for t in threats],
             "compliance": {

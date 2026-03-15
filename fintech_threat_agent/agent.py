@@ -46,6 +46,11 @@ class FinTechThreatAgent:
             compliance_issues = compliance.check(scan_results, content_results)
             compliance_summary = compliance.get_compliance_summary(compliance_issues)
 
+            # Phase 2b: Calculate scores
+            progress.update(task, description="[yellow]Calculating scores...")
+            security_score = compliance.calculate_security_score(threats)
+            compliance_score = compliance.calculate_compliance_score(compliance_issues)
+
             progress.update(task, description="[green]Generating report...")
 
         # Phase 3: Reporting
@@ -56,6 +61,8 @@ class FinTechThreatAgent:
             compliance_issues=compliance_issues,
             compliance_summary=compliance_summary,
             scan_results=scan_results,
+            security_score=security_score,
+            compliance_score=compliance_score,
         )
 
         # Export if requested
@@ -66,6 +73,8 @@ class FinTechThreatAgent:
                 compliance_issues=compliance_issues,
                 compliance_summary=compliance_summary,
                 scan_results=scan_results,
+                security_score=security_score,
+                compliance_score=compliance_score,
             )
             if output_file:
                 with open(output_file, "w") as f:
@@ -76,6 +85,8 @@ class FinTechThreatAgent:
 
         return {
             "threats_count": len(threats),
+            "security_score": security_score,
+            "compliance_score": compliance_score,
             "compliance_issues": len(compliance_issues),
             "compliance_failures": sum(1 for c in compliance_issues if c.status == "FAIL"),
         }
