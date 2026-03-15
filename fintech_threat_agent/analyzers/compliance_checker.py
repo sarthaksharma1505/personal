@@ -51,6 +51,7 @@ class ComplianceChecker:
         issues.extend(self._check_gdpr(scan_results, content_results))
         issues.extend(self._check_vapt_baseline(scan_results, content_results))
         issues.extend(self._check_data_localization(scan_results))
+        issues.extend(self._check_app_store_presence(content_results))
         return issues
 
     # ── RBI DPSC ──────────────────────────────────────────────────────────
@@ -413,12 +414,20 @@ class ComplianceChecker:
 
         # Investor grievance / complaint mechanism (SEBI SCORES)
         if privacy.get("has_grievance_officer"):
+            grievance_details = privacy.get("grievance_officer_details", {})
+            detail_parts = ["Grievance/nodal officer information found on website."]
+            if grievance_details.get("name"):
+                detail_parts.append(f"Officer: {grievance_details['name']}")
+            if grievance_details.get("email"):
+                detail_parts.append(f"Email: {grievance_details['email']}")
+            if grievance_details.get("phone"):
+                detail_parts.append(f"Phone: {grievance_details['phone']}")
             issues.append(ComplianceIssue(
                 regulation="SEBI Intermediaries",
                 section="Regulation 13 - Grievance Redressal",
                 requirement="Display grievance/compliance officer contact on website",
                 status="PASS",
-                details="Grievance/nodal officer information found on website.",
+                details=" ".join(detail_parts),
             ))
         else:
             issues.append(ComplianceIssue(
@@ -426,8 +435,9 @@ class ComplianceChecker:
                 section="Regulation 13 - Grievance Redressal",
                 requirement="Display grievance/compliance officer contact on website",
                 status="WARNING",
-                details="No grievance officer information detected. SEBI-registered "
-                        "intermediaries must display compliance officer details.",
+                details="No grievance officer information detected across any page. "
+                        "SEBI-registered intermediaries must display compliance "
+                        "officer details. Deep crawl checked all discoverable pages.",
             ))
 
         # VAPT certification requirement
@@ -1148,6 +1158,51 @@ class ComplianceChecker:
 
         return {"score": score, "rating": rating, "breakdown": breakdown}
 
+    # ── App Store Presence ─────────────────────────────────────────────
+
+    def _check_app_store_presence(self, content_results: dict) -> list[ComplianceIssue]:
+        """Check for Play Store and App Store links on the website."""
+        issues = []
+        app_links = content_results.get("app_store_links", {})
+        play_store = app_links.get("play_store", [])
+        app_store = app_links.get("app_store", [])
+
+        if play_store:
+            issues.append(ComplianceIssue(
+                regulation="App Distribution",
+                section="Google Play Store",
+                requirement="Mobile app available on Google Play Store",
+                status="PASS",
+                details=f"Play Store link detected: {play_store[0]}",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="App Distribution",
+                section="Google Play Store",
+                requirement="Mobile app available on Google Play Store",
+                status="NOT_CHECKED",
+                details="No Google Play Store link found on website.",
+            ))
+
+        if app_store:
+            issues.append(ComplianceIssue(
+                regulation="App Distribution",
+                section="Apple App Store",
+                requirement="Mobile app available on Apple App Store",
+                status="PASS",
+                details=f"App Store link detected: {app_store[0]}",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="App Distribution",
+                section="Apple App Store",
+                requirement="Mobile app available on Apple App Store",
+                status="NOT_CHECKED",
+                details="No Apple App Store link found on website.",
+            ))
+
+        return issues
+
     def calculate_compliance_score(self, issues: list["ComplianceIssue"]) -> dict:
         """Calculate compliance score from compliance check results.
 
@@ -1189,16 +1244,37 @@ class ComplianceChecker:
         return {"score": total_score, "rating": rating, "breakdown": breakdown}
 
     def get_compliance_summary(self, issues: list["ComplianceIssue"]) -> dict:
-        """Generate a summary of compliance status."""
-        summary = {"total": len(issues), "pass": 0, "fail": 0, "warning": 0, "not_checked": 0}
+        """Generate a summary of compliance status.
+
+        Separates actionable checks (PASS/FAIL/WARNING) from NOT_CHECKED items
+        so totals and percentages reflect only what was actually tested.
+        """
+        summary = {
+            "total": len(issues),
+            "total_actionable": 0,
+            "pass": 0,
+            "fail": 0,
+            "warning": 0,
+            "not_checked": 0,
+        }
         by_regulation: dict[str, dict[str, int]] = {}
 
         for issue in issues:
-            summary[issue.status.lower()] = summary.get(issue.status.lower(), 0) + 1
+            status = issue.status.lower()
+            summary[status] = summary.get(status, 0) + 1
+
             reg = issue.regulation
             if reg not in by_regulation:
-                by_regulation[reg] = {"pass": 0, "fail": 0, "warning": 0, "not_checked": 0}
-            by_regulation[reg][issue.status.lower()] = by_regulation[reg].get(issue.status.lower(), 0) + 1
+                by_regulation[reg] = {
+                    "pass": 0, "fail": 0, "warning": 0, "not_checked": 0,
+                    "total_actionable": 0,
+                }
+            by_regulation[reg][status] = by_regulation[reg].get(status, 0) + 1
+
+        # Calculate actionable totals (excluding NOT_CHECKED)
+        summary["total_actionable"] = summary["pass"] + summary["fail"] + summary["warning"]
+        for reg, counts in by_regulation.items():
+            counts["total_actionable"] = counts["pass"] + counts["fail"] + counts["warning"]
 
         summary["by_regulation"] = by_regulation
         return summary

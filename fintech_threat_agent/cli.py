@@ -6,6 +6,7 @@ import click
 from rich.console import Console
 
 from .agent import FinTechThreatAgent
+from .utils.url_validator import validate_url, InvalidURLError
 
 
 console = Console()
@@ -18,7 +19,7 @@ BANNER = r"""
  |_|   |_|_| |_|_|\___|\___|_| |_| |_| |_| |_|_|  \___|\__,_|\__|
 
   FinTech Threat Detection Agent for Indian Fintech
-  Cybersecurity Assessment Tool v1.0
+  Cybersecurity Assessment Tool v1.1 (Deep Crawl)
 """
 
 
@@ -27,25 +28,44 @@ BANNER = r"""
 @click.option("--timeout", "-t", default=15, help="Request timeout in seconds")
 @click.option("--output", "-o", default=None, help="Export JSON report to file")
 @click.option("--json-output", "-j", is_flag=True, help="Print JSON report to stdout")
-def main(url: str, timeout: int, output: str, json_output: bool):
+@click.option("--max-pages", "-p", default=50, help="Maximum pages to crawl (default: 50)")
+@click.option("--max-depth", "-d", default=3, help="Maximum crawl depth (default: 3)")
+def main(url: str, timeout: int, output: str, json_output: bool,
+         max_pages: int, max_depth: int):
     """Detect cybersecurity threats for Indian fintech products.
 
-    Simply provide the product URL to get a comprehensive security assessment
-    covering SSL/TLS, security headers, DNS, content analysis, and compliance
-    with RBI, CERT-In, PCI DSS, and IT Act regulations.
+    Deep-crawls the entire website to analyze every page and sub-page
+    for security threats and regulatory compliance with RBI, SEBI,
+    CERT-In, PCI DSS, DPDP Act, GDPR, and IT Act regulations.
+
+    Also detects Google Play Store and Apple App Store links.
 
     Example usage:
 
         python -m fintech_threat_agent https://example-fintech.in
 
         python -m fintech_threat_agent paytm.com --output report.json
+
+        python -m fintech_threat_agent bondscanner.com --max-pages 100
     """
     console.print(BANNER, style="cyan")
+
+    # Validate URL before proceeding
+    try:
+        url = validate_url(url)
+    except InvalidURLError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
     console.print(f"[bold]Target:[/bold] {url}")
+    console.print(f"[dim]Deep crawl: up to {max_pages} pages, depth {max_depth}[/dim]")
     console.print()
 
     try:
-        agent = FinTechThreatAgent(url=url, timeout=timeout)
+        agent = FinTechThreatAgent(
+            url=url, timeout=timeout,
+            max_pages=max_pages, max_depth=max_depth,
+        )
         result = agent.run(export_json=json_output, output_file=output)
 
         if json_output and "json" in result:

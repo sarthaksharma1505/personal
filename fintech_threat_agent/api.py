@@ -10,15 +10,17 @@ from pydantic import BaseModel, field_validator
 
 from .scanners.url_scanner import URLScanner
 from .scanners.content_scanner import ContentScanner
+from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
+from .utils.url_validator import validate_url, InvalidURLError
 
 
 app = FastAPI(
     title="FinTech Threat Detection Agent",
     description="Cybersecurity threat detection for Indian fintech products",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -32,16 +34,16 @@ app.add_middleware(
 class ScanRequest(BaseModel):
     url: str
     timeout: int = 15
+    max_pages: int = 50
+    max_depth: int = 3
 
     @field_validator("url")
     @classmethod
-    def validate_url(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("URL cannot be empty")
-        if not v.startswith(("http://", "https://")):
-            v = "https://" + v
-        return v
+    def check_url(cls, v: str) -> str:
+        try:
+            return validate_url(v)
+        except InvalidURLError as e:
+            raise ValueError(str(e)) from e
 
 
 class ScanResponse(BaseModel):
@@ -59,16 +61,30 @@ async def dashboard():
 
 @app.post("/scan", response_model=ScanResponse)
 async def scan_url(request: ScanRequest):
-    """Scan a fintech product URL for security threats."""
+    """Scan a fintech product URL for security threats.
+
+    Deep-crawls all pages and sub-pages for comprehensive analysis.
+    """
     try:
-        # Phase 1: Scan
+        # Phase 1: Deep crawl the website
+        crawler = SiteCrawler(
+            request.url,
+            timeout=request.timeout,
+            max_pages=request.max_pages,
+            max_depth=request.max_depth,
+        )
+        crawl_data = crawler.crawl()
+
+        # Phase 2: URL scanning (HTTP, SSL, DNS, headers)
         url_scanner = URLScanner(request.url, timeout=request.timeout)
         scan_results = url_scanner.scan_all()
+        scan_results["crawl_stats"] = crawl_data["crawl_stats"]
 
+        # Phase 3: Content scanning across all crawled pages
         content_scanner = ContentScanner(request.url, timeout=request.timeout)
-        content_results = content_scanner.scan()
+        content_results = content_scanner.scan(crawl_data=crawl_data)
 
-        # Phase 2: Analyze
+        # Phase 4: Analyze
         analyzer = ThreatAnalyzer()
         threats = analyzer.analyze(scan_results, content_results)
 
@@ -76,11 +92,11 @@ async def scan_url(request: ScanRequest):
         compliance_issues = compliance.check(scan_results, content_results)
         compliance_summary = compliance.get_compliance_summary(compliance_issues)
 
-        # Phase 3: Calculate scores
+        # Phase 5: Calculate scores
         security_score = compliance.calculate_security_score(threats)
         compliance_score = compliance.calculate_compliance_score(compliance_issues)
 
-        # Phase 4: Build response
+        # Phase 6: Build response
         reporter = ReportGenerator()
         json_str = reporter.export_json(
             url=request.url,
