@@ -14,12 +14,32 @@ _DOMAIN_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
 
+# App store URL patterns
+_PLAY_STORE_RE = re.compile(
+    r"^https?://play\.google\.com/store/apps/details\?", re.IGNORECASE
+)
+_APP_STORE_RE = re.compile(
+    r"^https?://(?:apps\.apple\.com|itunes\.apple\.com)/", re.IGNORECASE
+)
+
+
+def classify_url(url: str) -> str:
+    """Classify a validated URL as 'website', 'play_store', or 'app_store'.
+
+    Must be called on a URL that has already been validated/normalized.
+    """
+    if _PLAY_STORE_RE.match(url):
+        return "play_store"
+    if _APP_STORE_RE.match(url):
+        return "app_store"
+    return "website"
+
 
 def validate_url(url: str) -> str:
     """Validate and normalize a user-provided URL.
 
-    Checks that the input is a valid web URL (not random text, a file path,
-    a number, an email, etc.). Returns the normalized URL with scheme.
+    Accepts website URLs, Google Play Store links, and Apple App Store links.
+    Returns the normalized URL with scheme.
 
     Raises:
         InvalidURLError: If the input is not a valid URL.

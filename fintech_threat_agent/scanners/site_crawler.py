@@ -1,6 +1,7 @@
 """Site Crawler - Deep crawls websites to discover and fetch all pages and sub-pages."""
 
 import re
+import xml.etree.ElementTree as ET
 from urllib.parse import urlparse, urljoin, urldefrag
 
 import requests
@@ -12,29 +13,39 @@ class SiteCrawler:
 
     Prioritizes compliance-relevant pages (contact, grievance, about, legal,
     privacy, terms) and crawls all discoverable internal links up to a
-    configurable depth and page limit.
+    configurable depth and page limit.  Also parses sitemap.xml and robots.txt
+    for comprehensive URL discovery.
     """
 
     # Pages most likely to contain compliance-relevant information
     PRIORITY_PATHS = [
-        "/contact", "/contact-us", "/contactus",
+        "/contact", "/contact-us", "/contactus", "/reach-us",
         "/grievance", "/grievance-redressal", "/grievance-officer",
-        "/grievances", "/investor-grievance",
-        "/about", "/about-us", "/aboutus", "/about-company",
-        "/legal", "/legal-information",
-        "/privacy", "/privacy-policy", "/privacypolicy",
+        "/grievances", "/investor-grievance", "/complaints",
+        "/about", "/about-us", "/aboutus", "/about-company", "/overview",
+        "/legal", "/legal-information", "/legal-notices",
+        "/privacy", "/privacy-policy", "/privacypolicy", "/data-privacy",
         "/terms", "/terms-of-service", "/terms-and-conditions", "/tos",
         "/disclaimer", "/disclosures", "/disclosure",
-        "/compliance", "/regulatory", "/regulation",
-        "/investor-charter", "/investor-relations",
-        "/refund", "/refund-policy", "/cancellation-policy",
-        "/kyc", "/kyc-policy",
-        "/data-protection", "/data-privacy",
-        "/cookie-policy", "/cookies",
-        "/security", "/security-policy",
-        "/help", "/support", "/faq", "/faqs",
-        "/careers", "/team",
+        "/compliance", "/regulatory", "/regulation", "/regulatory-disclosures",
+        "/investor-charter", "/investor-relations", "/investors",
+        "/refund", "/refund-policy", "/cancellation-policy", "/return-policy",
+        "/kyc", "/kyc-policy", "/kyc-aml",
+        "/data-protection", "/data-privacy", "/data-security",
+        "/cookie-policy", "/cookies", "/cookie-notice",
+        "/security", "/security-policy", "/responsible-disclosure",
+        "/help", "/support", "/faq", "/faqs", "/help-center",
+        "/careers", "/team", "/leadership",
         "/sitemap", "/sitemap.xml",
+        "/robots.txt",
+        "/annual-report", "/corporate-governance",
+        "/nodal-officer", "/ombudsman",
+        "/aml-policy", "/anti-money-laundering",
+        "/risk-disclosure", "/risk-factors",
+        "/tariff", "/charges", "/fees", "/pricing",
+        "/csr", "/corporate-social-responsibility",
+        "/whistleblower", "/whistleblower-policy",
+        "/code-of-conduct", "/ethics",
     ]
 
     # Keywords in link text or href that indicate compliance-relevant pages
@@ -94,13 +105,17 @@ class SiteCrawler:
         # Phase 1: Fetch homepage and discover links
         self._fetch_page(self.base_url, depth=0)
 
-        # Phase 2: Generate priority URLs from known paths
+        # Phase 2: Parse robots.txt and sitemap.xml for URL discovery
+        self._parse_robots_txt()
+        self._parse_sitemaps()
+
+        # Phase 3: Generate priority URLs from known paths
         self._add_priority_urls()
 
-        # Phase 3: Crawl discovered URLs (BFS by priority)
+        # Phase 4: Crawl discovered URLs (BFS by priority)
         self._crawl_discovered()
 
-        # Phase 4: Aggregate results
+        # Phase 5: Aggregate results
         return self._build_results()
 
     def _fetch_page(self, url: str, depth: int) -> bool:
@@ -194,6 +209,79 @@ class SiteCrawler:
             if url in self.visited_urls:
                 continue
             self._fetch_page(url, depth)
+
+    def _parse_robots_txt(self):
+        """Fetch robots.txt and extract sitemap URLs and allowed paths."""
+        base = f"{self.parsed_base.scheme}://{self.parsed_base.hostname}"
+        robots_url = base + "/robots.txt"
+        try:
+            resp = self.session.get(robots_url, timeout=self.timeout)
+            if resp.status_code != 200:
+                return
+            for line in resp.text.splitlines():
+                line = line.strip()
+                if line.lower().startswith("sitemap:"):
+                    sitemap_url = line.split(":", 1)[1].strip()
+                    if sitemap_url.startswith("http"):
+                        self.discovered_urls.add((sitemap_url, 1, True))
+                        self._fetch_sitemap(sitemap_url)
+        except requests.RequestException:
+            pass
+
+    def _parse_sitemaps(self):
+        """Try common sitemap URLs if none found in robots.txt."""
+        base = f"{self.parsed_base.scheme}://{self.parsed_base.hostname}"
+        sitemap_urls = [
+            base + "/sitemap.xml",
+            base + "/sitemap_index.xml",
+            base + "/sitemap/sitemap.xml",
+        ]
+        for sitemap_url in sitemap_urls:
+            if sitemap_url not in self.visited_urls:
+                self._fetch_sitemap(sitemap_url)
+
+    def _fetch_sitemap(self, sitemap_url: str):
+        """Parse a sitemap.xml and add discovered URLs to the crawl queue."""
+        if len(self.discovered_urls) + len(self.visited_urls) > self.max_pages * 3:
+            return  # Don't discover too many URLs
+        try:
+            resp = self.session.get(sitemap_url, timeout=self.timeout)
+            if resp.status_code != 200:
+                return
+            content_type = resp.headers.get("Content-Type", "")
+            if "xml" not in content_type and "text" not in content_type:
+                return
+
+            try:
+                root = ET.fromstring(resp.text)
+            except ET.ParseError:
+                return
+
+            # Handle namespace
+            ns = ""
+            if root.tag.startswith("{"):
+                ns = root.tag.split("}")[0] + "}"
+
+            # Sitemap index → recurse into child sitemaps
+            for sitemap_el in root.findall(f".//{ns}sitemap"):
+                loc = sitemap_el.find(f"{ns}loc")
+                if loc is not None and loc.text:
+                    child_url = loc.text.strip()
+                    if self._is_same_domain(child_url):
+                        self._fetch_sitemap(child_url)
+
+            # URL entries
+            for url_el in root.findall(f".//{ns}url"):
+                loc = url_el.find(f"{ns}loc")
+                if loc is not None and loc.text:
+                    page_url = loc.text.strip()
+                    if self._is_same_domain(page_url):
+                        link_text = page_url.lower()
+                        is_priority = self._is_priority_link(page_url, link_text)
+                        self.discovered_urls.add((page_url, 1, is_priority))
+
+        except requests.RequestException:
+            pass
 
     def _normalize_url(self, url: str) -> str | None:
         """Normalize URL: remove fragments, trailing slashes, etc."""

@@ -1128,30 +1128,50 @@ class ComplianceChecker:
     def calculate_security_score(self, threats: list) -> dict:
         """Calculate security score from threat findings.
 
+        Uses per-threat penalties with diminishing returns within each
+        category so that sites with more issues score meaningfully lower.
+        No hard per-category cap — instead, each subsequent threat in the
+        same category contributes 65% of the previous penalty, providing
+        natural tapering while still differentiating heavy vs. light issues.
+
         Returns dict with score (0-100), rating, and breakdown.
         """
-        score = 100
-        severity_penalties = {"CRITICAL": 12, "HIGH": 7, "MEDIUM": 3, "LOW": 1, "INFO": 0}
-        cat_cap = 20
+        severity_penalties = {
+            "CRITICAL": 22,
+            "HIGH": 12,
+            "MEDIUM": 5,
+            "LOW": 2,
+            "INFO": 0,
+        }
 
-        cat_penalties: dict[str, int] = {}
+        # Track per-category: count of threats seen so far
+        cat_counts: dict[str, int] = {}
+        cat_penalties: dict[str, float] = {}
+
         for t in threats:
             cat = t.category
-            cat_penalties[cat] = cat_penalties.get(cat, 0) + severity_penalties.get(t.severity, 0)
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+            count = cat_counts[cat]
+            base = severity_penalties.get(t.severity, 0)
+            # Diminishing returns: 65% decay per subsequent threat in category
+            penalty = base * (0.65 ** (count - 1))
+            cat_penalties[cat] = cat_penalties.get(cat, 0.0) + penalty
 
+        # Build breakdown (rounded for display) and total deduction
         breakdown = {}
+        total_deduction = 0.0
         for cat, penalty in cat_penalties.items():
-            applied = min(penalty, cat_cap)
-            breakdown[cat] = applied
-            score -= applied
+            rounded = round(penalty, 1)
+            breakdown[cat] = rounded
+            total_deduction += penalty
 
-        score = max(0, min(100, score))
+        score = max(0, min(100, round(100 - total_deduction)))
 
-        if score >= 80:
+        if score >= 85:
             rating = "LOW RISK"
-        elif score >= 60:
+        elif score >= 70:
             rating = "MODERATE RISK"
-        elif score >= 40:
+        elif score >= 50:
             rating = "HIGH RISK"
         else:
             rating = "CRITICAL RISK"
@@ -1203,8 +1223,28 @@ class ComplianceChecker:
 
         return issues
 
+    # Importance weights for Indian fintech context.  Higher weight means
+    # that regulation contributes more to the overall compliance score.
+    REGULATION_WEIGHTS: dict[str, float] = {
+        "RBI DPSC": 1.5,
+        "DPDP Act 2023": 1.4,
+        "PCI DSS v4.0": 1.3,
+        "SEBI CSCRF": 1.3,
+        "SEBI Intermediaries": 1.2,
+        "IT Act 2000": 1.2,
+        "CERT-In": 1.1,
+        "VAPT Baseline": 1.0,
+        "GDPR": 0.8,
+        "RBI Data Localization": 0.6,
+        "App Distribution": 0.3,
+    }
+
     def calculate_compliance_score(self, issues: list["ComplianceIssue"]) -> dict:
         """Calculate compliance score from compliance check results.
+
+        Uses weighted regulation importance so that critical Indian fintech
+        regulations (RBI, DPDP, PCI DSS) matter more than auxiliary ones.
+        FAIL counts as 0%, WARNING as 40%, PASS as 100%.
 
         Returns dict with score (0-100), rating, and per-regulation breakdown.
         """
@@ -1216,20 +1256,31 @@ class ComplianceChecker:
         if not actionable:
             return {"score": 100, "rating": "FULLY COMPLIANT", "breakdown": {}}
 
-        weights = {"PASS": 1.0, "FAIL": 0.0, "WARNING": 0.5}
+        status_weights = {"PASS": 1.0, "FAIL": 0.0, "WARNING": 0.4}
         by_regulation: dict[str, list[float]] = {}
         for i in actionable:
-            w = weights.get(i.status, 0.0)
+            w = status_weights.get(i.status, 0.0)
             by_regulation.setdefault(i.regulation, []).append(w)
 
+        # Per-regulation scores (unweighted, for display)
         breakdown = {}
         for reg, scores in by_regulation.items():
             reg_score = round(sum(scores) / len(scores) * 100)
             breakdown[reg] = reg_score
 
-        total_score = round(sum(breakdown.values()) / len(breakdown)) if breakdown else 100
+        # Weighted overall score
+        weighted_sum = 0.0
+        weight_total = 0.0
+        for reg, reg_score in breakdown.items():
+            w = self.REGULATION_WEIGHTS.get(reg, 1.0)
+            weighted_sum += reg_score * w
+            weight_total += w
 
-        if total_score >= 80:
+        total_score = round(weighted_sum / weight_total) if weight_total else 100
+
+        if total_score == 100:
+            rating = "FULLY COMPLIANT"
+        elif total_score >= 80:
             rating = "LARGELY COMPLIANT"
         elif total_score >= 60:
             rating = "PARTIALLY COMPLIANT"
@@ -1237,9 +1288,6 @@ class ComplianceChecker:
             rating = "SIGNIFICANT GAPS"
         else:
             rating = "NON-COMPLIANT"
-
-        if total_score == 100:
-            rating = "FULLY COMPLIANT"
 
         return {"score": total_score, "rating": rating, "breakdown": breakdown}
 

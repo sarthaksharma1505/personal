@@ -14,7 +14,8 @@ from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
-from .utils.url_validator import validate_url, InvalidURLError
+from .scanners.app_store_scanner import AppStoreScanner
+from .utils.url_validator import validate_url, classify_url, InvalidURLError
 
 
 app = FastAPI(
@@ -66,23 +67,57 @@ async def scan_url(request: ScanRequest):
     Deep-crawls all pages and sub-pages for comprehensive analysis.
     """
     try:
-        # Phase 1: Deep crawl the website
-        crawler = SiteCrawler(
-            request.url,
-            timeout=request.timeout,
-            max_pages=request.max_pages,
-            max_depth=request.max_depth,
-        )
-        crawl_data = crawler.crawl()
+        url_type = classify_url(request.url)
+        app_data = None
+        scan_url = request.url
 
-        # Phase 2: URL scanning (HTTP, SSL, DNS, headers)
-        url_scanner = URLScanner(request.url, timeout=request.timeout)
-        scan_results = url_scanner.scan_all()
-        scan_results["crawl_stats"] = crawl_data["crawl_stats"]
+        # Handle app store URLs: scrape store metadata, find developer website
+        if url_type in ("play_store", "app_store"):
+            app_scanner = AppStoreScanner(request.url, timeout=request.timeout)
+            app_data = app_scanner.scan()
+            website_url = app_data.get("website_url", "")
+            if website_url:
+                try:
+                    scan_url = validate_url(website_url)
+                except InvalidURLError:
+                    scan_url = ""
 
-        # Phase 3: Content scanning across all crawled pages
-        content_scanner = ContentScanner(request.url, timeout=request.timeout)
-        content_results = content_scanner.scan(crawl_data=crawl_data)
+        if scan_url:
+            # Phase 1: Deep crawl the website
+            crawler = SiteCrawler(
+                scan_url,
+                timeout=request.timeout,
+                max_pages=request.max_pages,
+                max_depth=request.max_depth,
+            )
+            crawl_data = crawler.crawl()
+
+            # Phase 2: URL scanning (HTTP, SSL, DNS, headers)
+            url_scanner = URLScanner(scan_url, timeout=request.timeout)
+            scan_results = url_scanner.scan_all()
+            scan_results["crawl_stats"] = crawl_data["crawl_stats"]
+
+            # Phase 3: Content scanning across all crawled pages
+            content_scanner = ContentScanner(scan_url, timeout=request.timeout)
+            content_results = content_scanner.scan(crawl_data=crawl_data)
+        else:
+            scan_results = {
+                "url": request.url,
+                "http": {"reachable": True, "uses_https": True},
+                "ssl": {"has_ssl": True},
+                "dns": {},
+                "headers": {"present": {}, "missing": [], "quality": {}},
+            }
+            content_results = {
+                "data_exposure": [], "form_security": [], "external_resources": [],
+                "javascript_risks": [], "mixed_content": [], "sri_issues": [],
+                "inline_script_analysis": {}, "meta_security": {},
+                "privacy_compliance": {}, "issues": [],
+            }
+
+        # Inject app store metadata
+        if app_data:
+            content_results["app_store_metadata"] = app_data
 
         # Phase 4: Analyze
         analyzer = ThreatAnalyzer()
@@ -97,9 +132,13 @@ async def scan_url(request: ScanRequest):
         compliance_score = compliance.calculate_compliance_score(compliance_issues)
 
         # Phase 6: Build response
+        report_url = request.url
+        if app_data and scan_url and scan_url != request.url:
+            report_url = f"{request.url} (website: {scan_url})"
+
         reporter = ReportGenerator()
         json_str = reporter.export_json(
-            url=request.url,
+            url=report_url,
             threats=threats,
             compliance_issues=compliance_issues,
             compliance_summary=compliance_summary,
