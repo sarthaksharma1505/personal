@@ -425,14 +425,22 @@ function renderResults(data) {
     const compliance = data.compliance || {};
     const scan = data.scan_results || {};
 
-    // Risk score
+    // Risk score — penalties per finding, capped per category (max 20 pts each)
     let score = 100;
-    const penalties = { CRITICAL: 25, HIGH: 15, MEDIUM: 8, LOW: 3, INFO: 0 };
-    threats.forEach(t => { score -= (penalties[t.severity] || 0); });
-    (compliance.issues || []).forEach(c => {
-        if (c.status === 'FAIL') score -= 5;
-        else if (c.status === 'WARNING') score -= 2;
+    const penalties = { CRITICAL: 12, HIGH: 7, MEDIUM: 3, LOW: 1, INFO: 0 };
+    const catPenalties = {};
+    const CAT_CAP = 20;
+    threats.forEach(t => {
+        const cat = t.category || 'other';
+        catPenalties[cat] = (catPenalties[cat] || 0) + (penalties[t.severity] || 0);
     });
+    Object.values(catPenalties).forEach(p => { score -= Math.min(p, CAT_CAP); });
+    let compPenalty = 0;
+    (compliance.issues || []).forEach(c => {
+        if (c.status === 'FAIL') compPenalty += 3;
+        else if (c.status === 'WARNING') compPenalty += 1;
+    });
+    score -= Math.min(compPenalty, CAT_CAP);
     score = Math.max(0, Math.min(100, score));
 
     let rating, color;
