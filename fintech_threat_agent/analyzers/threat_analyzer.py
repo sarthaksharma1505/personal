@@ -40,6 +40,11 @@ class ThreatAnalyzer:
         threats.extend(self._analyze_content(content_results))
         threats.extend(self._analyze_sri(content_results))
         threats.extend(self._analyze_inline_scripts(content_results))
+        threats.extend(self._analyze_external_resources(content_results))
+        threats.extend(self._analyze_header_coverage(scan_results.get("headers", {})))
+        threats.extend(self._analyze_cookie_security(scan_results.get("headers", {})))
+        threats.extend(self._analyze_redirect_chain(scan_results.get("http", {})))
+        threats.extend(self._analyze_certificate_strength(scan_results.get("ssl", {})))
 
         # Sort by severity
         threats.sort(key=lambda t: self.SEVERITY_ORDER.get(t.severity, 5))
@@ -143,19 +148,6 @@ class ThreatAnalyzer:
                 recommendation=f"Remove or obfuscate the {disclosure['header']} header.",
                 references=["OWASP Information Disclosure"],
             ))
-
-        # Cookie issues
-        for cookie_issue in header_data.get("cookie_issues", []):
-            for issue in cookie_issue.get("issues", []):
-                severity = "HIGH" if "Secure" in issue else "MEDIUM"
-                threats.append(Threat(
-                    category="Session Security",
-                    title=f"Cookie Issue: {issue}",
-                    description=f"Cookie '{cookie_issue['cookie']}' has {issue}. This could allow session hijacking or cross-site attacks against financial accounts.",
-                    severity=severity,
-                    recommendation=f"Set appropriate cookie flags: Secure, HttpOnly, SameSite=Strict for session cookies.",
-                    references=["OWASP Session Management Cheat Sheet"],
-                ))
 
         return threats
 
@@ -388,5 +380,273 @@ class ThreatAnalyzer:
                                "to require matching nonces.",
                 references=["OWASP CSP Cheat Sheet"],
             ))
+
+        return threats
+
+    def _analyze_external_resources(self, content_data: dict) -> list[Threat]:
+        """Analyze third-party resource loading — varies significantly per site."""
+        threats = []
+        externals = content_data.get("external_resources", [])
+
+        if not externals:
+            return threats
+
+        # Count unique external domains
+        ext_domains = set(r.get("domain", "") for r in externals)
+        script_domains = set(
+            r.get("domain", "") for r in externals if r.get("type") == "script"
+        )
+
+        if len(script_domains) > 5:
+            threats.append(Threat(
+                category="Supply Chain Security",
+                title=f"Excessive Third-Party Scripts ({len(script_domains)} domains)",
+                description=f"The application loads scripts from {len(script_domains)} "
+                            f"external domains: {', '.join(sorted(script_domains)[:8])}. "
+                            f"Each external script is a potential supply chain attack vector.",
+                severity="MEDIUM",
+                recommendation="Minimize third-party script dependencies. Host critical "
+                               "scripts locally. Use SRI hashes for external scripts.",
+                references=["OWASP Third-Party JavaScript Management"],
+            ))
+        elif len(script_domains) > 2:
+            threats.append(Threat(
+                category="Supply Chain Security",
+                title=f"Multiple Third-Party Scripts ({len(script_domains)} domains)",
+                description=f"Scripts loaded from {len(script_domains)} external domains: "
+                            f"{', '.join(sorted(script_domains))}. Each is a supply chain risk.",
+                severity="LOW",
+                recommendation="Review third-party scripts regularly. Use SRI for integrity.",
+                references=["OWASP Third-Party JavaScript Management"],
+            ))
+
+        if len(ext_domains) > 10:
+            threats.append(Threat(
+                category="Privacy",
+                title=f"High Third-Party Dependency ({len(ext_domains)} external domains)",
+                description=f"Resources loaded from {len(ext_domains)} different external "
+                            f"domains. High third-party dependency increases data leakage "
+                            f"surface and privacy exposure for users.",
+                severity="LOW",
+                recommendation="Audit all third-party integrations. Consider self-hosting "
+                               "critical resources. Implement Permissions-Policy header.",
+                references=["DPDP Act 2023 - Third-party Data Sharing"],
+            ))
+
+        return threats
+
+    def _analyze_header_coverage(self, header_data: dict) -> list[Threat]:
+        """Evaluate overall security header coverage — score varies per site."""
+        threats = []
+        present = header_data.get("present", {})
+        missing = header_data.get("missing", [])
+
+        total = len(present) + len(missing)
+        if total == 0:
+            return threats
+
+        coverage_pct = len(present) / total * 100
+        missing_count = len(missing)
+
+        # These headers are commonly missing; only flag if coverage is poor
+        if missing_count >= 7:
+            threats.append(Threat(
+                category="Security Posture",
+                title=f"Very Poor Header Coverage ({len(present)}/{total} headers)",
+                description=f"Only {len(present)} of {total} recommended security headers "
+                            f"are configured ({coverage_pct:.0f}% coverage). Missing: "
+                            f"{', '.join(missing[:5])}{'...' if missing_count > 5 else ''}.",
+                severity="HIGH",
+                recommendation="Implement missing security headers. Priority: "
+                               "HSTS, CSP, X-Content-Type-Options, X-Frame-Options.",
+                references=["OWASP Secure Headers Project"],
+            ))
+        elif missing_count >= 5:
+            threats.append(Threat(
+                category="Security Posture",
+                title=f"Low Header Coverage ({len(present)}/{total} headers)",
+                description=f"Only {coverage_pct:.0f}% of recommended security headers "
+                            f"are configured. Missing: {', '.join(missing)}.",
+                severity="MEDIUM",
+                recommendation="Add missing security headers to improve defense-in-depth.",
+                references=["OWASP Secure Headers Project"],
+            ))
+
+        # Missing Permissions-Policy specifically (for fintech privacy)
+        if "Permissions-Policy" in missing:
+            threats.append(Threat(
+                category="Privacy",
+                title="Missing Permissions-Policy Header",
+                description="No Permissions-Policy header. Browser features like camera, "
+                            "microphone, geolocation, and payment API access are unrestricted "
+                            "for embedded third-party content.",
+                severity="MEDIUM",
+                recommendation="Add Permissions-Policy to restrict sensitive browser APIs: "
+                               "camera=(), microphone=(), geolocation=(), payment=(self).",
+                references=["W3C Permissions Policy", "DPDP Act 2023"],
+            ))
+
+        return threats
+
+    def _analyze_cookie_security(self, header_data: dict) -> list[Threat]:
+        """Detailed cookie analysis — counts and specific flag issues vary per site."""
+        threats = []
+        cookie_issues = header_data.get("cookie_issues", [])
+
+        if not cookie_issues:
+            return threats
+
+        # Count specific flag types missing
+        insecure_count = 0
+        no_httponly_count = 0
+        no_samesite_count = 0
+
+        for ci in cookie_issues:
+            for iss in ci.get("issues", []):
+                if "Secure" in iss:
+                    insecure_count += 1
+                if "HttpOnly" in iss:
+                    no_httponly_count += 1
+                if "SameSite" in iss:
+                    no_samesite_count += 1
+
+        total_cookies = len(cookie_issues)
+
+        if insecure_count > 0:
+            threats.append(Threat(
+                category="Session Security",
+                title=f"Cookies Without Secure Flag ({insecure_count} of {total_cookies})",
+                description=f"{insecure_count} cookie(s) lack the Secure flag. These cookies "
+                            f"can be transmitted over unencrypted HTTP, exposing session tokens "
+                            f"and user data to network eavesdroppers.",
+                severity="HIGH",
+                recommendation="Add the Secure flag to all cookies, especially session cookies.",
+                references=["OWASP Session Management Cheat Sheet"],
+            ))
+
+        if no_httponly_count > 0:
+            threats.append(Threat(
+                category="Session Security",
+                title=f"Cookies Without HttpOnly ({no_httponly_count} of {total_cookies})",
+                description=f"{no_httponly_count} cookie(s) lack HttpOnly. JavaScript can "
+                            f"access these cookies, making them vulnerable to XSS-based "
+                            f"session theft.",
+                severity="MEDIUM",
+                recommendation="Add HttpOnly flag to all session and authentication cookies.",
+                references=["OWASP Session Management Cheat Sheet"],
+            ))
+
+        if no_samesite_count > 0:
+            threats.append(Threat(
+                category="Session Security",
+                title=f"Cookies Without SameSite ({no_samesite_count} of {total_cookies})",
+                description=f"{no_samesite_count} cookie(s) lack SameSite attribute. "
+                            f"These are vulnerable to CSRF attacks.",
+                severity="MEDIUM",
+                recommendation="Set SameSite=Strict or SameSite=Lax on all cookies.",
+                references=["OWASP CSRF Prevention"],
+            ))
+
+        return threats
+
+    def _analyze_redirect_chain(self, http_data: dict) -> list[Threat]:
+        """Analyze redirect behavior — varies per site."""
+        threats = []
+        chain = http_data.get("redirect_chain", [])
+
+        if len(chain) > 3:
+            threats.append(Threat(
+                category="Security Posture",
+                title=f"Excessive Redirect Chain ({len(chain)} hops)",
+                description=f"The URL goes through {len(chain)} redirects before reaching "
+                            f"the final page. Long redirect chains can be exploited for "
+                            f"open redirect attacks and degrade security analysis.",
+                severity="LOW",
+                recommendation="Minimize redirects. Ensure no open redirect vulnerabilities.",
+                references=["OWASP Unvalidated Redirects"],
+            ))
+
+        # Check for mixed-scheme redirects (HTTPS → HTTP at any point)
+        for i, redirect_url in enumerate(chain):
+            if redirect_url.startswith("http://") and i > 0:
+                prev_url = chain[i - 1] if i > 0 else ""
+                if prev_url.startswith("https://"):
+                    threats.append(Threat(
+                        category="Transport Security",
+                        title="HTTPS to HTTP Downgrade in Redirect Chain",
+                        description=f"Redirect chain includes a downgrade from HTTPS to HTTP: "
+                                    f"{redirect_url}. This exposes data during the redirect.",
+                        severity="HIGH",
+                        recommendation="Ensure all redirects stay on HTTPS throughout the chain.",
+                        references=["OWASP Transport Layer Security"],
+                    ))
+                    break
+
+        return threats
+
+    def _analyze_certificate_strength(self, ssl_data: dict) -> list[Threat]:
+        """Analyze certificate details — issuer, expiry, SANs vary per site."""
+        threats = []
+        cert = ssl_data.get("certificate", {})
+
+        if not cert:
+            return threats
+
+        # Certificate nearing expiry (30-90 days)
+        days_left = cert.get("days_until_expiry")
+        if days_left is not None:
+            if 0 < days_left <= 30:
+                threats.append(Threat(
+                    category="Encryption",
+                    title=f"Certificate Expiring Soon ({days_left} days)",
+                    description=f"SSL certificate expires in {days_left} days. "
+                                f"Expired certificates cause browser warnings and break "
+                                f"user trust for fintech applications.",
+                    severity="HIGH",
+                    recommendation="Renew the certificate immediately. Set up automated renewal.",
+                    references=["RBI Cyber Security Framework"],
+                ))
+            elif 30 < days_left <= 90:
+                threats.append(Threat(
+                    category="Encryption",
+                    title=f"Certificate Expiry Warning ({days_left} days left)",
+                    description=f"SSL certificate expires in {days_left} days. Plan renewal.",
+                    severity="LOW",
+                    recommendation="Schedule certificate renewal before expiry.",
+                    references=[],
+                ))
+
+        # Wildcard certificate check
+        san_list = cert.get("san", [])
+        wildcards = [s for s in san_list if s.startswith("*.")]
+        if wildcards:
+            threats.append(Threat(
+                category="Encryption",
+                title="Wildcard SSL Certificate in Use",
+                description=f"Certificate uses wildcard domain(s): {', '.join(wildcards)}. "
+                            f"If the private key is compromised, all subdomains are affected.",
+                severity="LOW",
+                recommendation="Consider using specific certificates per subdomain for "
+                               "critical fintech services.",
+                references=["NIST SP 800-52"],
+            ))
+
+        # Cipher suite strength
+        cipher = ssl_data.get("cipher_suite", "")
+        if cipher:
+            weak_ciphers = ("RC4", "DES", "3DES", "MD5", "SHA1")
+            for wc in weak_ciphers:
+                if wc in cipher.upper():
+                    threats.append(Threat(
+                        category="Encryption",
+                        title=f"Weak Cipher Suite: {cipher}",
+                        description=f"The server negotiated cipher suite '{cipher}' which "
+                                    f"uses {wc}. This is considered cryptographically weak.",
+                        severity="HIGH",
+                        recommendation="Configure the server to use strong cipher suites only "
+                                       "(AES-GCM, ChaCha20-Poly1305).",
+                        references=["PCI DSS v4.0 Requirement 4"],
+                    ))
+                    break
 
         return threats

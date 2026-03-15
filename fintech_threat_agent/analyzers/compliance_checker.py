@@ -52,6 +52,9 @@ class ComplianceChecker:
         issues.extend(self._check_vapt_baseline(scan_results, content_results))
         issues.extend(self._check_data_localization(scan_results))
         issues.extend(self._check_app_store_presence(content_results))
+        issues.extend(self._check_supply_chain(scan_results, content_results))
+        issues.extend(self._check_cookie_granular(scan_results))
+        issues.extend(self._check_csp_quality(scan_results))
         return issues
 
     # ── RBI DPSC ──────────────────────────────────────────────────────────
@@ -1120,6 +1123,302 @@ class ComplianceChecker:
             details="Data localization requires infrastructure-level audit. "
                     "External scan cannot verify server locations. Manual verification recommended.",
         ))
+
+        return issues
+
+    # ── Supply Chain Security ────────────────────────────────────────────
+
+    def _check_supply_chain(self, scan_results: dict, content_results: dict) -> list[ComplianceIssue]:
+        """Check third-party resource and SRI compliance — varies significantly per site."""
+        issues = []
+        sri_issues = content_results.get("sri_issues", [])
+        externals = content_results.get("external_resources", [])
+        inline = content_results.get("inline_script_analysis", {})
+
+        # SRI check (PCI DSS 6.4.3 - script integrity)
+        if sri_issues:
+            domains = set(i.get("domain", "") for i in sri_issues)
+            issues.append(ComplianceIssue(
+                regulation="PCI DSS v4.0",
+                section="Requirement 6.4.3",
+                requirement="Integrity of payment page scripts verified",
+                status="FAIL",
+                details=f"{len(sri_issues)} external resource(s) from {len(domains)} domain(s) "
+                        f"loaded without Subresource Integrity hashes.",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="PCI DSS v4.0",
+                section="Requirement 6.4.3",
+                requirement="Integrity of payment page scripts verified",
+                status="PASS" if externals else "NOT_CHECKED",
+                details="All external resources have SRI hashes."
+                if externals else "No external resources detected to check.",
+            ))
+
+        # Third-party script domains (DPDP Act - data sharing with third parties)
+        ext_script_domains = set(
+            r.get("domain", "") for r in externals if r.get("type") == "script"
+        )
+        all_ext_domains = set(r.get("domain", "") for r in externals)
+
+        if len(ext_script_domains) > 5:
+            issues.append(ComplianceIssue(
+                regulation="DPDP Act 2023",
+                section="Section 8(7) - Third-Party Sharing",
+                requirement="Limit and disclose third-party data processors",
+                status="FAIL",
+                details=f"Scripts loaded from {len(ext_script_domains)} third-party domains. "
+                        f"Each can access user data. Domains: "
+                        f"{', '.join(sorted(ext_script_domains)[:6])}.",
+            ))
+        elif len(ext_script_domains) > 2:
+            issues.append(ComplianceIssue(
+                regulation="DPDP Act 2023",
+                section="Section 8(7) - Third-Party Sharing",
+                requirement="Limit and disclose third-party data processors",
+                status="WARNING",
+                details=f"Scripts from {len(ext_script_domains)} third-party domains: "
+                        f"{', '.join(sorted(ext_script_domains))}.",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="DPDP Act 2023",
+                section="Section 8(7) - Third-Party Sharing",
+                requirement="Limit and disclose third-party data processors",
+                status="PASS",
+                details=f"Minimal third-party script dependencies ({len(ext_script_domains)} domain(s)).",
+            ))
+
+        # Third-party tracking (GDPR - data minimisation)
+        if len(all_ext_domains) > 10:
+            issues.append(ComplianceIssue(
+                regulation="GDPR",
+                section="Article 5(1)(c) - Data Minimisation",
+                requirement="Limit third-party data collection to what is necessary",
+                status="FAIL",
+                details=f"Resources loaded from {len(all_ext_domains)} external domains, "
+                        f"creating extensive third-party data exposure.",
+            ))
+        elif len(all_ext_domains) > 5:
+            issues.append(ComplianceIssue(
+                regulation="GDPR",
+                section="Article 5(1)(c) - Data Minimisation",
+                requirement="Limit third-party data collection to what is necessary",
+                status="WARNING",
+                details=f"Resources from {len(all_ext_domains)} external domains. "
+                        f"Review whether all are necessary.",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="GDPR",
+                section="Article 5(1)(c) - Data Minimisation",
+                requirement="Limit third-party data collection to what is necessary",
+                status="PASS",
+                details=f"Limited external dependencies ({len(all_ext_domains)} domain(s)).",
+            ))
+
+        # Inline scripts without nonces (VAPT)
+        inline_count = inline.get("inline_script_count", 0)
+        nonce_count = inline.get("scripts_with_nonce", 0)
+        if inline_count > 0 and nonce_count == 0:
+            issues.append(ComplianceIssue(
+                regulation="VAPT Baseline",
+                section="VA-9 - Script Integrity",
+                requirement="Inline scripts secured with nonces or hashes",
+                status="FAIL",
+                details=f"{inline_count} inline script(s) without nonce attributes. "
+                        f"Cannot distinguish legitimate scripts from injected ones.",
+            ))
+        elif inline_count > 0:
+            issues.append(ComplianceIssue(
+                regulation="VAPT Baseline",
+                section="VA-9 - Script Integrity",
+                requirement="Inline scripts secured with nonces or hashes",
+                status="PASS",
+                details=f"{nonce_count}/{inline_count} inline scripts use nonces.",
+            ))
+
+        # SRI check under SEBI CSCRF (supply chain)
+        if sri_issues:
+            issues.append(ComplianceIssue(
+                regulation="SEBI CSCRF",
+                section="GC.4 - Supply Chain Security",
+                requirement="Integrity verification of third-party components",
+                status="FAIL",
+                details=f"{len(sri_issues)} external resource(s) without integrity verification. "
+                        "Supply chain compromise risk for investor-facing application.",
+            ))
+        elif externals:
+            issues.append(ComplianceIssue(
+                regulation="SEBI CSCRF",
+                section="GC.4 - Supply Chain Security",
+                requirement="Integrity verification of third-party components",
+                status="PASS",
+                details="External resources verified with SRI hashes.",
+            ))
+
+        return issues
+
+    # ── Granular Cookie Compliance ────────────────────────────────────────
+
+    def _check_cookie_granular(self, scan_results: dict) -> list[ComplianceIssue]:
+        """Detailed per-flag cookie compliance — varies per site's cookie config."""
+        issues = []
+        headers = scan_results.get("headers", {})
+        cookie_issues = headers.get("cookie_issues", [])
+
+        if not cookie_issues:
+            return issues
+
+        # Count specific missing flags
+        insecure = sum(
+            1 for ci in cookie_issues
+            for iss in ci.get("issues", []) if "Secure" in iss
+        )
+        no_httponly = sum(
+            1 for ci in cookie_issues
+            for iss in ci.get("issues", []) if "HttpOnly" in iss
+        )
+        no_samesite = sum(
+            1 for ci in cookie_issues
+            for iss in ci.get("issues", []) if "SameSite" in iss
+        )
+        total = len(cookie_issues)
+
+        # RBI DPSC - specific cookie flag checks
+        if insecure > 0:
+            issues.append(ComplianceIssue(
+                regulation="RBI DPSC",
+                section="Section 7.2 - Cookie Security",
+                requirement="Secure flag on all cookies transmitting payment session data",
+                status="FAIL",
+                details=f"{insecure} of {total} cookie(s) missing Secure flag. "
+                        "Session tokens can leak over unencrypted connections.",
+            ))
+
+        if no_httponly > 0:
+            issues.append(ComplianceIssue(
+                regulation="RBI DPSC",
+                section="Section 7.3 - Session Protection",
+                requirement="HttpOnly flag to prevent script access to session tokens",
+                status="FAIL",
+                details=f"{no_httponly} of {total} cookie(s) missing HttpOnly flag. "
+                        "Vulnerable to XSS-based session theft.",
+            ))
+
+        # PCI DSS - SameSite for CSRF on payment forms
+        if no_samesite > 0:
+            issues.append(ComplianceIssue(
+                regulation="PCI DSS v4.0",
+                section="Requirement 6.2.4",
+                requirement="CSRF protection on payment-related cookies",
+                status="FAIL",
+                details=f"{no_samesite} of {total} cookie(s) missing SameSite attribute. "
+                        "Payment forms vulnerable to CSRF.",
+            ))
+        else:
+            issues.append(ComplianceIssue(
+                regulation="PCI DSS v4.0",
+                section="Requirement 6.2.4",
+                requirement="CSRF protection on payment-related cookies",
+                status="PASS",
+                details="All cookies have SameSite attribute set.",
+            ))
+
+        return issues
+
+    # ── CSP Quality Compliance ────────────────────────────────────────────
+
+    def _check_csp_quality(self, scan_results: dict) -> list[ComplianceIssue]:
+        """Check CSP configuration quality — varies per site's CSP policy."""
+        issues = []
+        headers = scan_results.get("headers", {})
+        quality = headers.get("quality", {})
+        missing = headers.get("missing", [])
+
+        # If CSP is present, check its quality
+        if "Content-Security-Policy" not in missing:
+            csp_q = quality.get("csp", {})
+            csp_issues = csp_q.get("issues", [])
+
+            has_unsafe_inline = any("unsafe-inline" in i for i in csp_issues)
+            has_unsafe_eval = any("unsafe-eval" in i for i in csp_issues)
+            has_wildcard = any("Wildcard" in i or "wildcard" in i for i in csp_issues)
+
+            # RBI - CSP strictness for payment apps
+            if has_unsafe_eval or has_wildcard:
+                issues.append(ComplianceIssue(
+                    regulation="RBI DPSC",
+                    section="Section 7.4 - XSS Prevention",
+                    requirement="Strict Content Security Policy for payment applications",
+                    status="FAIL",
+                    details=f"CSP uses dangerous directives: {', '.join(csp_issues[:3])}. "
+                            "Attackers can inject scripts into payment pages.",
+                ))
+            elif has_unsafe_inline:
+                issues.append(ComplianceIssue(
+                    regulation="RBI DPSC",
+                    section="Section 7.4 - XSS Prevention",
+                    requirement="Strict Content Security Policy for payment applications",
+                    status="WARNING",
+                    details="CSP allows 'unsafe-inline'. Consider using nonces instead.",
+                ))
+            else:
+                issues.append(ComplianceIssue(
+                    regulation="RBI DPSC",
+                    section="Section 7.4 - XSS Prevention",
+                    requirement="Strict Content Security Policy for payment applications",
+                    status="PASS",
+                    details="CSP is configured without dangerous directives.",
+                ))
+
+            # VAPT - CSP effectiveness rating
+            if len(csp_issues) >= 3:
+                issues.append(ComplianceIssue(
+                    regulation="VAPT Baseline",
+                    section="VA-10 - CSP Effectiveness",
+                    requirement="Content Security Policy effectively prevents XSS",
+                    status="FAIL",
+                    details=f"CSP has {len(csp_issues)} weakness(es): {'; '.join(csp_issues[:4])}.",
+                ))
+            elif len(csp_issues) >= 1:
+                issues.append(ComplianceIssue(
+                    regulation="VAPT Baseline",
+                    section="VA-10 - CSP Effectiveness",
+                    requirement="Content Security Policy effectively prevents XSS",
+                    status="WARNING",
+                    details=f"CSP has minor weakness(es): {'; '.join(csp_issues)}.",
+                ))
+            else:
+                issues.append(ComplianceIssue(
+                    regulation="VAPT Baseline",
+                    section="VA-10 - CSP Effectiveness",
+                    requirement="Content Security Policy effectively prevents XSS",
+                    status="PASS",
+                    details="CSP is well configured with no detected weaknesses.",
+                ))
+
+        # HSTS quality check
+        hsts_q = quality.get("hsts", {})
+        hsts_issues = hsts_q.get("issues", [])
+        if "Strict-Transport-Security" not in missing:
+            if hsts_issues:
+                issues.append(ComplianceIssue(
+                    regulation="VAPT Baseline",
+                    section="VA-11 - HSTS Quality",
+                    requirement="HSTS configured with adequate max-age and flags",
+                    status="FAIL" if any("dangerously" in i for i in hsts_issues) else "WARNING",
+                    details=f"HSTS issues: {'; '.join(hsts_issues)}.",
+                ))
+            else:
+                issues.append(ComplianceIssue(
+                    regulation="VAPT Baseline",
+                    section="VA-11 - HSTS Quality",
+                    requirement="HSTS configured with adequate max-age and flags",
+                    status="PASS",
+                    details="HSTS properly configured with adequate max-age.",
+                ))
 
         return issues
 
