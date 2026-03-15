@@ -115,9 +115,20 @@ async def scan_url(request: ScanRequest):
                 "privacy_compliance": {}, "issues": [],
             }
 
-        # Inject app store metadata
+        # Inject app store metadata and ensure input URL is in app_store_links
         if app_data:
             content_results["app_store_metadata"] = app_data
+            app_links = content_results.setdefault("app_store_links", {})
+            if url_type == "play_store":
+                existing = app_links.get("play_store", [])
+                if request.url not in existing:
+                    existing.insert(0, request.url)
+                app_links["play_store"] = existing
+            elif url_type == "app_store":
+                existing = app_links.get("app_store", [])
+                if request.url not in existing:
+                    existing.insert(0, request.url)
+                app_links["app_store"] = existing
 
         # Phase 4: Analyze
         analyzer = ThreatAnalyzer()

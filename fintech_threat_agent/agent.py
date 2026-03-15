@@ -113,6 +113,18 @@ class FinTechThreatAgent:
                 content_scanner = ContentScanner(website_url, timeout=self.timeout)
                 content_results = content_scanner.scan(crawl_data=crawl_data)
                 content_results["app_store_metadata"] = app_data
+                # Ensure the input app store URL is always present
+                app_links = content_results.setdefault("app_store_links", {})
+                if self.url_type == "play_store":
+                    existing = app_links.get("play_store", [])
+                    if self.url not in existing:
+                        existing.insert(0, self.url)
+                    app_links["play_store"] = existing
+                elif self.url_type == "app_store":
+                    existing = app_links.get("app_store", [])
+                    if self.url not in existing:
+                        existing.insert(0, self.url)
+                    app_links["app_store"] = existing
             else:
                 self.console.print(
                     "[yellow]No developer website found. "

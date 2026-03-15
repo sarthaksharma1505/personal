@@ -113,10 +113,18 @@ if st.button("Scan Now", type="primary", disabled=not url):
     # Inject app store metadata into content results
     if app_data:
         content_results["app_store_metadata"] = app_data
+        # Ensure the input app store URL is always present in links
+        app_links = content_results.setdefault("app_store_links", {})
         if url_type == "play_store":
-            content_results.setdefault("app_store_links", {})["play_store"] = [url]
+            existing = app_links.get("play_store", [])
+            if url not in existing:
+                existing.insert(0, url)
+            app_links["play_store"] = existing
         elif url_type == "app_store":
-            content_results.setdefault("app_store_links", {})["app_store"] = [url]
+            existing = app_links.get("app_store", [])
+            if url not in existing:
+                existing.insert(0, url)
+            app_links["app_store"] = existing
 
     with st.spinner("Analyzing threats and compliance..."):
         analyzer = ThreatAnalyzer()
