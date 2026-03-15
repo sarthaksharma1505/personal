@@ -9,6 +9,7 @@ from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
+from .utils.url_validator import validate_url
 
 
 class FinTechThreatAgent:
@@ -16,7 +17,7 @@ class FinTechThreatAgent:
 
     def __init__(self, url: str, timeout: int = 15, max_pages: int = 50,
                  max_depth: int = 3):
-        self.url = url
+        self.url = validate_url(url)
         self.timeout = timeout
         self.max_pages = max_pages
         self.max_depth = max_depth

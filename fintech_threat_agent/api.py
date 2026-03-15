@@ -14,6 +14,7 @@ from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
+from .utils.url_validator import validate_url, InvalidURLError
 
 
 app = FastAPI(
@@ -38,13 +39,11 @@ class ScanRequest(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def validate_url(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("URL cannot be empty")
-        if not v.startswith(("http://", "https://")):
-            v = "https://" + v
-        return v
+    def check_url(cls, v: str) -> str:
+        try:
+            return validate_url(v)
+        except InvalidURLError as e:
+            raise ValueError(str(e)) from e
 
 
 class ScanResponse(BaseModel):

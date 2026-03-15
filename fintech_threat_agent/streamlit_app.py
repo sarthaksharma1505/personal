@@ -10,6 +10,7 @@ from .scanners.site_crawler import SiteCrawler
 from .analyzers.threat_analyzer import ThreatAnalyzer
 from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
+from .utils.url_validator import validate_url, InvalidURLError
 
 
 st.set_page_config(
@@ -28,6 +29,13 @@ max_pages = col_opt1.number_input("Max pages to crawl", min_value=1, max_value=2
 max_depth = col_opt2.number_input("Max crawl depth", min_value=1, max_value=5, value=3)
 
 if st.button("Scan Now", type="primary", disabled=not url):
+    # Validate URL before scanning
+    try:
+        url = validate_url(url)
+    except InvalidURLError as e:
+        st.error(str(e))
+        st.stop()
+
     with st.spinner("Deep crawling website (discovering all pages and sub-pages)..."):
         # Phase 1: Deep crawl
         crawler = SiteCrawler(url, max_pages=max_pages, max_depth=max_depth)

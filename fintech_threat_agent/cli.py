@@ -6,6 +6,7 @@ import click
 from rich.console import Console
 
 from .agent import FinTechThreatAgent
+from .utils.url_validator import validate_url, InvalidURLError
 
 
 console = Console()
@@ -48,6 +49,14 @@ def main(url: str, timeout: int, output: str, json_output: bool,
         python -m fintech_threat_agent bondscanner.com --max-pages 100
     """
     console.print(BANNER, style="cyan")
+
+    # Validate URL before proceeding
+    try:
+        url = validate_url(url)
+    except InvalidURLError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
     console.print(f"[bold]Target:[/bold] {url}")
     console.print(f"[dim]Deep crawl: up to {max_pages} pages, depth {max_depth}[/dim]")
     console.print()
