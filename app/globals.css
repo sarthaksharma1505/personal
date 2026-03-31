@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #111827;
+  --bg-tertiary: #0d1b2a;
+  --border-color: #1e3a5f;
+  --accent: #00d4ff;
+  --accent-hover: #33ddff;
+  --text-primary: #e0e0e0;
+  --text-secondary: #8899aa;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e3a5f #0a0e1a;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: #0a0e1a;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1e3a5f;
+  border-radius: 3px;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(17, 24, 39, 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(30, 58, 95, 0.5);
+  }
+  .glass-hover:hover {
+    background: rgba(17, 24, 39, 0.95);
+    border-color: rgba(0, 212, 255, 0.3);
+  }
+  .glow-border {
+    box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.1), 0 0 15px rgba(0, 212, 255, 0.05);
+  }
+  .gradient-text {
+    background: linear-gradient(135deg, #00d4ff 0%, #0088cc 50%, #00d4ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+/* Animated gradient background */
+.bg-mesh {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(0, 212, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(0, 136, 204, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(0, 212, 255, 0.03) 0%, transparent 50%);
+}
+
+/* Score ring animation */
+@keyframes drawCircle {
+  from { stroke-dashoffset: 283; }
+}
+
+.score-ring-animate {
+  animation: drawCircle 1.5s ease-out forwards;
+}
+
+/* Scan progress animation */
+@keyframes progressPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.progress-pulse {
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
+
+/* Stagger animation for list items */
+.stagger-item {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: slideUp 0.4s ease-out forwards;
+}
+
+.stagger-item:nth-child(1) { animation-delay: 0.05s; }
+.stagger-item:nth-child(2) { animation-delay: 0.1s; }
+.stagger-item:nth-child(3) { animation-delay: 0.15s; }
+.stagger-item:nth-child(4) { animation-delay: 0.2s; }
+.stagger-item:nth-child(5) { animation-delay: 0.25s; }
+.stagger-item:nth-child(6) { animation-delay: 0.3s; }
+.stagger-item:nth-child(7) { animation-delay: 0.35s; }
+.stagger-item:nth-child(8) { animation-delay: 0.4s; }
+.stagger-item:nth-child(9) { animation-delay: 0.45s; }
+.stagger-item:nth-child(10) { animation-delay: 0.5s; }
+
+@keyframes slideUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
