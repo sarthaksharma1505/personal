@@ -16,6 +16,7 @@ from .analyzers.compliance_checker import ComplianceChecker
 from .reports.report_generator import ReportGenerator
 from .scanners.app_store_scanner import AppStoreScanner
 from .utils.url_validator import validate_url, classify_url, InvalidURLError
+from .adaptive_engine import AdaptiveEngine
 
 
 app = FastAPI(
@@ -142,6 +143,20 @@ async def scan_url(request: ScanRequest):
         security_score = compliance.calculate_security_score(threats)
         compliance_score = compliance.calculate_compliance_score(compliance_issues)
 
+        # Phase 5.5: Adaptive AI analysis
+        adaptive_engine = AdaptiveEngine()
+        adaptive_insights = adaptive_engine.analyze(
+            scan_results=scan_results,
+            content_results=content_results,
+            threats=threats,
+            compliance_issues=compliance_issues,
+            security_score=security_score,
+            compliance_score=compliance_score,
+        )
+        adjusted = adaptive_engine.adjust_scores(security_score, compliance_score, threats)
+        security_score = adjusted["security_score"]
+        compliance_score = adjusted["compliance_score"]
+
         # Phase 6: Build response
         report_url = request.url
         if app_data and scan_url and scan_url != request.url:
@@ -158,7 +173,12 @@ async def scan_url(request: ScanRequest):
             compliance_score=compliance_score,
         )
 
-        return ScanResponse(success=True, data=json.loads(json_str))
+        result = json.loads(json_str)
+        result["adaptive_insights"] = [
+            i.__dict__ if hasattr(i, '__dict__') else i
+            for i in adaptive_insights
+        ]
+        return ScanResponse(success=True, data=result)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
